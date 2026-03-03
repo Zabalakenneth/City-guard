@@ -17,7 +17,6 @@ export default function Profile() {
 
         <div className="flex gap-10 font-semibold">
           <button onClick={() => navigate("/dashboard")}>HOME</button>
-          <button onClick={() => navigate("/dashboard")}>REPORTS</button>
           <button onClick={() => navigate("/profile")} className="text-red-600">
             ADMIN
           </button>

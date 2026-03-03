@@ -9,17 +9,15 @@ export default function Dashboard() {
     navigate("/")
   }
 
-  // 🔴 SAMPLE REPORT DATA (replace later with database)
   const reports = [
-    { id: 1, type: "FIRE" },
-    { id: 2, type: "FIRE" },
-    { id: 3, type: "FLOOD" },
-    { id: 4, type: "CRIME" },
-    { id: 5, type: "MEDICAL" },
-    { id: 6, type: "MEDICAL" },
+    { id: 1, type: "FIRE", location: "Brgy Pantal", time: "2 mins ago" },
+    { id: 2, type: "FIRE", location: "Brgy Bonuan", time: "5 mins ago" },
+    { id: 3, type: "FLOOD", location: "Brgy Mayombo", time: "8 mins ago" },
+    { id: 4, type: "CRIME", location: "Brgy Lasip", time: "12 mins ago" },
+    { id: 5, type: "MEDICAL", location: "Brgy Tapuac", time: "18 mins ago" },
+    { id: 6, type: "MEDICAL", location: "Brgy Calmay", time: "25 mins ago" },
   ]
 
-  // 🔴 AUTO COUNTING LOGIC
   const summary = {
     FIRE: reports.filter(r => r.type === "FIRE").length,
     MEDICAL: reports.filter(r => r.type === "MEDICAL").length,
@@ -36,7 +34,6 @@ export default function Dashboard() {
 
         <div className="flex gap-10 font-semibold items-center">
           <button onClick={() => navigate("/dashboard")}>HOME</button>
-          <button>REPORTS</button>
           <button onClick={() => navigate("/profile")}>ADMIN</button>
 
           <button onClick={logout} className="text-red-600 font-bold">
@@ -51,7 +48,6 @@ export default function Dashboard() {
         {/* LEFT COLUMN */}
         <div className="col-span-3 space-y-6">
 
-          {/* ACTIVE EMERGENCIES */}
           <div className="bg-white shadow border">
             <div className="bg-red-600 text-white px-4 py-2 font-semibold">
               ACTIVE EMERGENCIES
@@ -90,7 +86,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* ASSIGNED RESPONDERS */}
           <div className="bg-white shadow border">
             <div className="bg-red-600 text-white px-4 py-2 font-semibold">
               ASSIGNED RESPONDERS
@@ -131,7 +126,7 @@ export default function Dashboard() {
             <iframe
               title="map"
               className="w-full h-full"
-              src="https://www.openstreetmap.org/export/embed.html"
+              src="https://www.openstreetmap.org/export/embed.html?bbox=120.28%2C15.98%2C120.38%2C16.10&layer=mapnik&marker=16.0430%2C120.3333"
             />
           </div>
         </div>
@@ -140,38 +135,76 @@ export default function Dashboard() {
         <div className="col-span-3 space-y-6">
 
           {/* SUMMARY */}
+<div className="bg-white shadow border">
+  <div className="bg-red-600 text-white px-4 py-2 font-semibold">
+    EMERGENCY SUMMARY
+  </div>
+
+  <div className="p-4 grid grid-cols-2 gap-3 text-white text-center">
+
+    <div className="bg-red-600 p-4 rounded">
+      <div className="text-2xl font-bold">{summary.FIRE}</div>
+      <div className="text-sm">FIRE</div>
+    </div>
+
+    <div className="bg-green-600 p-4 rounded">
+      <div className="text-2xl font-bold">{summary.MEDICAL}</div>
+      <div className="text-sm">MEDICAL</div>
+    </div>
+
+    <div className="bg-yellow-500 p-4 rounded">
+      <div className="text-2xl font-bold">{summary.CRIME}</div>
+      <div className="text-sm">CRIME</div>
+    </div>
+
+    <div className="bg-blue-600 p-4 rounded">
+      <div className="text-2xl font-bold">{summary.FLOOD}</div>
+      <div className="text-sm">FLOOD</div>
+    </div>
+
+  </div>
+
+  {/* VIEW ALL BUTTON */}
+  <div className="text-center py-2 border-t">
+    <button
+      onClick={() => navigate("/reports")}
+      className="text-blue-600 text-sm font-semibold hover:underline"
+    >
+      View All
+    </button>
+  </div>
+</div>
+
+          {/* NOTIFICATIONS */}
           <div className="bg-white shadow border">
             <div className="bg-red-600 text-white px-4 py-2 font-semibold">
-              EMERGENCY SUMMARY
+              NOTIFICATIONS
             </div>
 
-            <div className="p-4 grid grid-cols-2 gap-3 text-white text-center">
+            <div className="max-h-60 overflow-y-auto divide-y">
+              {reports.map((report) => (
+                <div key={report.id} className="p-3 hover:bg-gray-100 cursor-pointer transition">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-sm">
+                      {report.type}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {report.time}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    {report.location}
+                  </div>
+                </div>
+              ))}
+            </div>
 
-              <div className="bg-red-600 p-4 rounded">
-                <div className="text-2xl font-bold">{summary.FIRE}</div>
-                <div className="text-sm">FIRE</div>
-              </div>
-
-              <div className="bg-green-600 p-4 rounded">
-                <div className="text-2xl font-bold">{summary.MEDICAL}</div>
-                <div className="text-sm">MEDICAL</div>
-              </div>
-
-              <div className="bg-yellow-500 p-4 rounded">
-                <div className="text-2xl font-bold">{summary.CRIME}</div>
-                <div className="text-sm">CRIME</div>
-              </div>
-
-              <div className="bg-blue-600 p-4 rounded">
-                <div className="text-2xl font-bold">{summary.FLOOD}</div>
-                <div className="text-sm">FLOOD</div>
-              </div>
-
+            <div className="text-center py-2 border-t">
+              <button className="text-blue-600 text-sm font-semibold hover:underline">
+                View All
+              </button>
             </div>
           </div>
-
-          <div className="bg-white shadow h-40"></div>
-          <div className="bg-white shadow h-40"></div>
 
         </div>
 
