@@ -1,6 +1,27 @@
 import { Link } from "react-router-dom";
+import { useState } from "react";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth } from "../firebase";
 
 function ForgotPassword() {
+
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+
+  const handleReset = async () => {
+    try {
+
+      await sendPasswordResetEmail(auth, email);
+
+      setMessage("Password reset link sent to your email.");
+
+    } catch (error) {
+
+      setMessage("Failed to send reset email.");
+
+    }
+  };
+
   return (
     <div
       style={{
@@ -11,6 +32,7 @@ function ForgotPassword() {
         overflow: "hidden",
       }}
     >
+
       {/* LEFT SIDE */}
       <div
         style={{
@@ -20,6 +42,7 @@ function ForgotPassword() {
           zIndex: 2,
         }}
       >
+
         <h1 style={{ fontSize: "54px", fontWeight: "800", marginBottom: "40px" }}>
           CITY GUARD
         </h1>
@@ -32,27 +55,24 @@ function ForgotPassword() {
           type="email"
           placeholder="Email"
           style={inputStyle}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
         />
 
-        <input
-          type="text"
-          placeholder="Verification Code"
-          style={inputStyle}
-        />
-
-        <input
-          type="password"
-          placeholder="New Password"
-          style={inputStyle}
-        />
-
-        <button style={buttonStyle}>
+        <button style={buttonStyle} onClick={handleReset}>
           RESET PASSWORD
         </button>
+
+        {message && (
+          <p style={{ marginTop: "10px", color: "green", fontSize: "14px" }}>
+            {message}
+          </p>
+        )}
 
         <Link to="/" style={backStyle}>
           Back to login
         </Link>
+
       </div>
 
       {/* RIGHT IMAGE */}
@@ -101,6 +121,7 @@ function ForgotPassword() {
           zIndex: 3,
         }}
       />
+
     </div>
   );
 }
@@ -124,7 +145,6 @@ const buttonStyle = {
   fontWeight: "600",
   cursor: "pointer",
   marginTop: "6px",
-  transition: "0.2s",
 };
 
 const backStyle = {
