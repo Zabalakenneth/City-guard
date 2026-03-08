@@ -17,7 +17,7 @@ export default function Profile() {
 
         <div className="flex gap-10 font-semibold">
           <button onClick={() => navigate("/dashboard")}>HOME</button>
-          <button onClick={() => navigate("/profile")} className="text-red-600">
+          <button onClick={() => navigate("/profile")} className="text-blue-600">
             ADMIN
           </button>
         </div>
@@ -30,7 +30,7 @@ export default function Profile() {
         <div className="col-span-3 space-y-6">
 
           <div className="bg-white shadow border">
-            <div className="bg-red-600 text-white px-4 py-2 font-semibold">
+            <div className="bg-blue-600 text-white px-4 py-2 font-semibold">
               ADMIN MENU
             </div>
 
@@ -47,7 +47,7 @@ export default function Profile() {
         <div className="col-span-6 space-y-6">
 
           <div className="bg-white shadow border">
-            <div className="bg-red-600 text-white px-4 py-2 font-semibold">
+            <div className="bg-blue-600 text-white px-4 py-2 font-semibold">
               ADMIN PROFILE
             </div>
 
@@ -70,7 +70,7 @@ export default function Profile() {
 
               <button
                 onClick={handleLogout}
-                className="mt-6 bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 transition"
+                className="mt-6 bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
               >
                 LOG OUT
               </button>
@@ -84,7 +84,7 @@ export default function Profile() {
         <div className="col-span-3 space-y-6">
 
           <div className="bg-white shadow border">
-            <div className="bg-red-600 text-white px-4 py-2 font-semibold">
+            <div className="bg-blue-600 text-white px-4 py-2 font-semibold">
               SYSTEM STATUS
             </div>
 

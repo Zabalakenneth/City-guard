@@ -27,7 +27,7 @@ function ForgotPassword() {
       style={{
         display: "flex",
         height: "100vh",
-        backgroundColor: "#efefef",
+        background: "linear-gradient(180deg,#1a3dff 0%,#0a27ff 50%,#00008b 100%)",
         position: "relative",
         overflow: "hidden",
       }}
@@ -151,7 +151,7 @@ const backStyle = {
   display: "block",
   marginTop: "18px",
   fontSize: "13px",
-  color: "#444",
+  color: "black",
   textDecoration: "none",
 };
 

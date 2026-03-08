@@ -36,7 +36,7 @@ return (
 <div style={{
 display:"flex",
 height:"100vh",
-backgroundColor:"#efefef",
+background:"linear-gradient(180deg,#020202 0%,#001eff 50%,#00008b 100%)",
 alignItems:"center",
 justifyContent:"space-between",
 padding:"0 80px"
@@ -94,7 +94,7 @@ border:"none"
 to="/forgot-password"
 style={{
 fontSize:"13px",
-color:"#555",
+color:"#fdfdfd",
 textDecoration:"none",
 display:"block",
 marginBottom:"10px"

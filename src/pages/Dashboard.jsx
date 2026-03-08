@@ -1,107 +1,167 @@
 import { useEffect, useState } from "react";
 import { db } from "../firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 
-export default function Dashboard() {
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import L from "leaflet";
+
+export default function Dashboard(){
 
 const navigate = useNavigate()
 
-const logout = () => {
+const logout = ()=>{
 localStorage.removeItem("cityguard_auth")
 navigate("/")
 }
 
-const [reports, setReports] = useState([])
+const [reports,setReports] = useState([])
 
-useEffect(() => {
+/* MARKER ICONS */
 
-const fetchReports = async () => {
+const fireIcon = new L.Icon({
+iconUrl:"https://maps.google.com/mapfiles/ms/icons/red-dot.png",
+iconSize:[32,32]
+})
 
-const querySnapshot = await getDocs(collection(db, "reports"))
+const medicalIcon = new L.Icon({
+iconUrl:"https://maps.google.com/mapfiles/ms/icons/green-dot.png",
+iconSize:[32,32]
+})
 
-const data = querySnapshot.docs.map((doc) => ({
-id: doc.id,
-type: doc.data().emergencyType?.toUpperCase() || "UNKNOWN",
-location: doc.data().location || "Unknown location",
-time: doc.data().timestamp || "Just now"
-}))
+const crimeIcon = new L.Icon({
+iconUrl:"https://maps.google.com/mapfiles/ms/icons/yellow-dot.png",
+iconSize:[32,32]
+})
+
+const floodIcon = new L.Icon({
+iconUrl:"https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+iconSize:[32,32]
+})
+
+const getIcon = (type)=>{
+if(type==="FIRE") return fireIcon
+if(type==="MEDICAL") return medicalIcon
+if(type==="CRIME") return crimeIcon
+if(type==="FLOOD") return floodIcon
+return fireIcon
+}
+
+useEffect(()=>{
+
+const unsubscribe = onSnapshot(collection(db,"reports"),(snapshot)=>{
+
+const data = snapshot.docs.map((doc)=>{
+
+const d = doc.data()
+
+return{
+id:doc.id,
+type:d.emergencyType ? d.emergencyType.toUpperCase() : "UNKNOWN",
+location:d.location || "Unknown location",
+time:d.timestamp || "Just now",
+
+lat: d.latitude !== undefined ? Number(d.latitude) : null,
+lng: d.longitude !== undefined ? Number(d.longitude) : null,
+
+status:d.status || "NEW"
+}
+
+})
+
+console.log("REPORT DATA:",data)
 
 setReports(data)
 
+if(data.length>0){
+const audio = new Audio("/alert.mp3")
+audio.play().catch(()=>{})
 }
 
-fetchReports()
+})
 
-}, [])
+return()=>unsubscribe()
+
+},[])
+
+
+const respondToEmergency = async(id)=>{
+
+await updateDoc(doc(db,"reports",id),{
+status:"RESPONDING"
+})
+
+}
 
 const summary = {
-FIRE: reports.filter(r => r.type === "FIRE").length,
-MEDICAL: reports.filter(r => r.type === "MEDICAL").length,
-CRIME: reports.filter(r => r.type === "CRIME").length,
-FLOOD: reports.filter(r => r.type === "FLOOD").length,
+FIRE: reports.filter(r=>r.type==="FIRE").length,
+MEDICAL: reports.filter(r=>r.type==="MEDICAL").length,
+CRIME: reports.filter(r=>r.type==="CRIME").length,
+FLOOD: reports.filter(r=>r.type==="FLOOD").length,
 }
 
-return (
+
+return(
 
 <div className="min-h-screen bg-gray-100">
 
-{/* NAVBAR */}
-<div className="bg-white border-b px-10 py-4 flex justify-between items-center">
+{/* HEADER */}
 
-<h1 className="text-2xl font-bold tracking-wide">
+<div className="bg-white border-b px-10 py-4 flex justify-between items-center shadow">
+
+<h1 className="text-2xl font-bold tracking-wide text-blue-700">
 CITY GUARD
 </h1>
 
 <div className="flex gap-10 font-semibold items-center">
-<button onClick={() => navigate("/dashboard")}>HOME</button>
-<button onClick={() => navigate("/profile")}>ADMIN</button>
+<button onClick={()=>navigate("/dashboard")}>HOME</button>
+<button onClick={()=>navigate("/profile")}>ADMIN</button>
 <button onClick={logout} className="text-red-600">LOGOUT</button>
 </div>
 
 </div>
 
 
-{/* GRID */}
 <div className="grid grid-cols-12 gap-6 p-8">
 
 
-{/* LEFT COLUMN */}
+{/* LEFT PANEL */}
+
 <div className="col-span-3 space-y-6">
 
+<div className="bg-white shadow-lg rounded overflow-hidden">
 
-<div className="bg-white shadow border">
-
-<div className="bg-red-600 text-white px-4 py-2 font-semibold">
+<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
 ACTIVE EMERGENCIES
 </div>
 
 <div className="divide-y">
 
 {reports.slice(0,3).map((r)=>(
-
-<div key={r.id} className="p-4 flex justify-between">
+<div key={r.id} className="p-4 space-y-2">
 
 <div>
 🚨 <b>{r.type}</b>
 <div className="text-xs text-gray-500">{r.location}</div>
 </div>
 
-<span className="bg-yellow-500 text-white px-2 py-1 text-xs rounded">
-NEW
-</span>
+<button
+onClick={()=>respondToEmergency(r.id)}
+className="bg-blue-600 text-white px-2 py-1 text-xs rounded hover:bg-blue-700"
+>
+RESPOND
+</button>
 
 </div>
-
 ))}
 
 </div>
 </div>
 
 
-<div className="bg-white shadow border">
+<div className="bg-white shadow-lg rounded overflow-hidden">
 
-<div className="bg-red-600 text-white px-4 py-2 font-semibold">
+<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
 ASSIGNED RESPONDERS
 </div>
 
@@ -116,10 +176,11 @@ ASSIGNED RESPONDERS
 <span className="bg-green-600 text-white px-2 py-1 text-xs rounded">
 ON SCENE
 </span>
+
 </div>
 
-
 <div className="p-4 flex justify-between">
+
 <div>
 🚒 <b>BFP</b>
 <div className="text-xs text-gray-500">Dagupan City</div>
@@ -128,6 +189,7 @@ ON SCENE
 <span className="bg-green-600 text-white px-2 py-1 text-xs rounded">
 ON SCENE
 </span>
+
 </div>
 
 </div>
@@ -137,37 +199,59 @@ ON SCENE
 
 
 {/* MAP */}
-<div className="col-span-6 bg-white shadow border">
 
-<div className="bg-red-600 text-white px-4 py-2 font-semibold">
+<div className="col-span-6 bg-white shadow-lg rounded overflow-hidden">
+
+<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
 LIVE MAP
 </div>
 
-<div className="h-[520px] relative">
+<div className="h-[520px]">
 
-<iframe
-title="map"
+<MapContainer
+center={[16.0430,120.3333]}
+zoom={14}
 className="w-full h-full"
-src="https://www.openstreetmap.org/export/embed.html?bbox=120.28%2C15.98%2C120.38%2C16.10&layer=mapnik&marker=16.0430%2C120.3333"
+>
+
+<TileLayer
+url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
 />
 
-{/* SAMPLE EMERGENCY MARKERS */}
-<div className="absolute top-20 left-40 text-red-600 text-xl animate-bounce">🚨</div>
-<div className="absolute top-60 left-72 text-red-600 text-xl animate-bounce">🚨</div>
-<div className="absolute top-96 left-52 text-red-600 text-xl animate-bounce">🚨</div>
+{reports.map((r)=>(
+r.lat !== null && r.lng !== null &&(
+
+<Marker
+key={r.id}
+position={[r.lat,r.lng]}
+icon={getIcon(r.type)}
+>
+
+<Popup>
+<b>{r.type}</b>
+<br/>
+{r.location}
+</Popup>
+
+</Marker>
+
+)
+))}
+
+</MapContainer>
 
 </div>
+
 </div>
 
 
-{/* RIGHT COLUMN */}
+{/* RIGHT PANEL */}
+
 <div className="col-span-3 space-y-6">
 
+<div className="bg-white shadow-lg rounded overflow-hidden">
 
-{/* SUMMARY */}
-<div className="bg-white shadow border">
-
-<div className="bg-red-600 text-white px-4 py-2 font-semibold">
+<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
 EMERGENCY SUMMARY
 </div>
 
@@ -175,64 +259,43 @@ EMERGENCY SUMMARY
 
 <div className="bg-red-600 p-4 rounded">
 <div className="text-2xl font-bold">{summary.FIRE}</div>
-<div className="text-sm">FIRE</div>
+<div className="text-sm">🔥 FIRE</div>
 </div>
 
 <div className="bg-green-600 p-4 rounded">
 <div className="text-2xl font-bold">{summary.MEDICAL}</div>
-<div className="text-sm">MEDICAL</div>
+<div className="text-sm">🚑 MEDICAL</div>
 </div>
 
 <div className="bg-yellow-500 p-4 rounded">
 <div className="text-2xl font-bold">{summary.CRIME}</div>
-<div className="text-sm">CRIME</div>
+<div className="text-sm">🚓 CRIME</div>
 </div>
 
 <div className="bg-blue-600 p-4 rounded">
 <div className="text-2xl font-bold">{summary.FLOOD}</div>
-<div className="text-sm">FLOOD</div>
+<div className="text-sm">🌊 FLOOD</div>
 </div>
 
 </div>
 
-<div className="text-center py-2 border-t">
-
-<button
-onClick={() => navigate("/reports")}
-className="text-blue-600 text-sm font-semibold hover:underline"
->
-
-View All
-
-</button>
-
-</div>
 </div>
 
 
-{/* NOTIFICATIONS */}
-<div className="bg-white shadow border">
+<div className="bg-white shadow-lg rounded overflow-hidden">
 
-<div className="bg-red-600 text-white px-4 py-2 font-semibold">
+<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
 NOTIFICATIONS
 </div>
 
 <div className="max-h-60 overflow-y-auto divide-y">
 
-{reports.map((report) => (
+{reports.map((report)=>(
+<div key={report.id} className="p-3 hover:bg-gray-100">
 
-<div key={report.id} className="p-3 hover:bg-gray-100 cursor-pointer transition">
-
-<div className="flex justify-between items-center">
-
-<span className="font-semibold text-sm">
-{report.type}
-</span>
-
-<span className="text-xs text-gray-500">
-{report.time}
-</span>
-
+<div className="flex justify-between text-sm">
+<b>🚨 {report.type}</b>
+<span className="text-gray-500 text-xs">{report.time}</span>
 </div>
 
 <div className="text-xs text-gray-600">
@@ -240,26 +303,17 @@ NOTIFICATIONS
 </div>
 
 </div>
-
 ))}
 
 </div>
 
-<div className="text-center py-2 border-t">
-
-<button className="text-blue-600 text-sm font-semibold hover:underline">
-View All
-</button>
+</div>
 
 </div>
 
 </div>
 
-
-</div>
-</div>
 </div>
 
 )
-
 }
