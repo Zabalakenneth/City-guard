@@ -1,24 +1,26 @@
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+// Firebase SDK
+import { initializeApp } from "firebase/app"
+import { getAuth } from "firebase/auth"
+import { getFirestore } from "firebase/firestore"
 
-// Your web app's Firebase configuration
+// Firebase configuration (from your friend's project)
 const firebaseConfig = {
-  apiKey: "AIzaSyD9kkGZ6YgpabI40iGIzc7PjGctIVsd9VQ",
-  authDomain: "city-guard-3fc12.firebaseapp.com",
-  projectId: "city-guard-3fc12",
-  storageBucket: "city-guard-3fc12.firebasestorage.app",
-  messagingSenderId: "189829038990",
-  appId: "1:189829038990:web:c794ea93e036fe56ef1adf",
-  measurementId: "G-ZJSW77R7HS"
-};
+  apiKey: "AIzaSyDoVwmGTA4u6t9L5vdv6LUnbJJ4rQEfs5A",
+  authDomain: "cityguard-53367.firebaseapp.com",
+  projectId: "cityguard-53367",
+  storageBucket: "cityguard-53367.firebasestorage.app",
+  messagingSenderId: "1026728958360",
+  appId: "1:1026728958360:web:02aa389838151d18f5b3ed",
+  measurementId: "G-SJSTXEQ4D9"
+}
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(firebaseConfig)
 
-// AUTH (for login / forgot password)
-export const auth = getAuth(app);
+// Firebase Authentication (login system)
+export const auth = getAuth(app)
 
-// DATABASE (optional but useful later)
-export const db = getFirestore(app);
+// Firestore Database (reports, users, etc)
+export const db = getFirestore(app)
+
+export default app

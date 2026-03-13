@@ -1,101 +1,276 @@
+import { useEffect, useState } from "react"
+import { getAuth, signOut } from "firebase/auth"
 import { useNavigate } from "react-router-dom"
 
-export default function Profile() {
-  const navigate = useNavigate()
+import { db } from "../firebase"
+import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore"
 
-  const handleLogout = () => {
-    localStorage.removeItem("cityguard_auth")
-    navigate("/")
-  }
+function Profile(){
 
-  return (
-    <div className="min-h-screen bg-gray-100">
+const auth = getAuth()
+const navigate = useNavigate()
 
-      {/* NAVBAR */}
-      <div className="bg-white border-b px-10 py-4 flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-wide">CITY GUARD</h1>
+const [user,setUser] = useState(null)
+const [time,setTime] = useState(new Date())
+const [alerts,setAlerts] = useState([])
 
-        <div className="flex gap-10 font-semibold">
-          <button onClick={() => navigate("/dashboard")}>HOME</button>
-          <button onClick={() => navigate("/profile")} className="text-blue-600">
-            ADMIN
-          </button>
-        </div>
-      </div>
+useEffect(()=>{
 
-      {/* CONTENT */}
-      <div className="grid grid-cols-12 gap-6 p-8">
+setUser(auth.currentUser)
 
-        {/* LEFT SIDEBAR */}
-        <div className="col-span-3 space-y-6">
+const timer = setInterval(()=>{
+setTime(new Date())
+},1000)
 
-          <div className="bg-white shadow border">
-            <div className="bg-blue-600 text-white px-4 py-2 font-semibold">
-              ADMIN MENU
-            </div>
+return ()=>clearInterval(timer)
 
-            <div className="p-4 space-y-3 text-sm">
-              <div className="font-semibold">Profile Info</div>
-              <div>System Settings</div>
-              <div>Logs</div>
-            </div>
-          </div>
+},[])
 
-        </div>
 
-        {/* MAIN PROFILE */}
-        <div className="col-span-6 space-y-6">
+// FIRESTORE ALERT LISTENER
 
-          <div className="bg-white shadow border">
-            <div className="bg-blue-600 text-white px-4 py-2 font-semibold">
-              ADMIN PROFILE
-            </div>
+useEffect(()=>{
 
-            <div className="p-6 space-y-4">
+const q = query(
+collection(db,"reports"),
+orderBy("timestamp","desc"),
+limit(5)
+)
 
-              <div>
-                <div className="text-sm text-gray-500">Name</div>
-                <div className="font-semibold text-lg">Admin User</div>
-              </div>
+const unsub = onSnapshot(q,(snapshot)=>{
 
-              <div>
-                <div className="text-sm text-gray-500">Email</div>
-                <div className="font-semibold text-lg">admin@cityguard.com</div>
-              </div>
+const data = snapshot.docs.map(doc=>({
+id:doc.id,
+...doc.data()
+}))
 
-              <div>
-                <div className="text-sm text-gray-500">Role</div>
-                <div className="font-semibold text-lg">System Administrator</div>
-              </div>
+setAlerts(data)
 
-              <button
-                onClick={handleLogout}
-                className="mt-6 bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
-              >
-                LOG OUT
-              </button>
+})
 
-            </div>
-          </div>
+return ()=>unsub()
 
-        </div>
+},[])
 
-        {/* RIGHT SIDE */}
-        <div className="col-span-3 space-y-6">
 
-          <div className="bg-white shadow border">
-            <div className="bg-blue-600 text-white px-4 py-2 font-semibold">
-              SYSTEM STATUS
-            </div>
+const handleLogout = async ()=>{
 
-            <div className="p-4 text-sm">
-              All services running normally.
-            </div>
-          </div>
+await signOut(auth)
+navigate("/")
 
-        </div>
-
-      </div>
-    </div>
-  )
 }
+
+
+// CLICK ALERT → OPEN DASHBOARD
+
+const openAlert = (alert)=>{
+navigate(`/dashboard?reportId=${alert.id}`)
+}
+
+
+return(
+
+<div style={{padding:"40px",fontFamily:"Arial"}}>
+
+{/* HEADER */}
+
+<div style={{
+display:"flex",
+justifyContent:"space-between",
+alignItems:"center"
+}}>
+
+<h1>CITY GUARD</h1>
+
+<div style={{display:"flex",gap:"20px"}}>
+
+<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
+HOME
+</p>
+
+<p style={{color:"blue",cursor:"pointer"}}>
+ADMIN
+</p>
+
+</div>
+
+</div>
+
+<hr/>
+
+<div style={{display:"flex",gap:"30px",marginTop:"30px"}}>
+
+{/* ADMIN MENU */}
+
+<div style={{
+width:"250px",
+border:"1px solid #ccc",
+borderRadius:"6px"
+}}>
+
+<div style={{
+background:"#2d5be3",
+color:"white",
+padding:"10px",
+fontWeight:"bold"
+}}>
+ADMIN MENU
+</div>
+
+<div style={{padding:"15px"}}>
+<p>Profile Info</p>
+<p>System Settings</p>
+<p>Logs</p>
+</div>
+
+</div>
+
+
+{/* PROFILE + ALERTS */}
+
+<div style={{
+flex:1,
+display:"flex",
+flexDirection:"column",
+gap:"20px"
+}}>
+
+{/* PROFILE */}
+
+<div style={{
+border:"1px solid #ccc",
+borderRadius:"6px"
+}}>
+
+<div style={{
+background:"#2d5be3",
+color:"white",
+padding:"10px",
+fontWeight:"bold"
+}}>
+ADMIN PROFILE
+</div>
+
+<div style={{padding:"20px"}}>
+
+<p><b>Name</b></p>
+<p>{user?.displayName || "Administrator"}</p>
+
+<p><b>Email</b></p>
+<p>{user?.email || "No email available"}</p>
+
+<p><b>Role</b></p>
+<p>System Administrator</p>
+
+<p><b>Last Login</b></p>
+<p>{time.toLocaleString()}</p>
+
+<button
+onClick={handleLogout}
+style={{
+marginTop:"20px",
+padding:"10px 20px",
+background:"#2d5be3",
+border:"none",
+color:"white",
+borderRadius:"5px",
+cursor:"pointer"
+}}
+>
+LOG OUT
+</button>
+
+</div>
+
+</div>
+
+
+{/* RECENT ALERTS */}
+
+<div style={{
+border:"1px solid #ccc",
+borderRadius:"6px"
+}}>
+
+<div style={{
+background:"#e33",
+color:"white",
+padding:"10px",
+fontWeight:"bold"
+}}>
+RECENT EMERGENCY ALERTS
+</div>
+
+<div style={{padding:"15px"}}>
+
+{alerts.length === 0 && <p>No recent alerts</p>}
+
+{alerts.map((a)=>(
+<div
+key={a.id}
+onClick={()=>openAlert(a)}
+style={{
+borderBottom:"1px solid #eee",
+padding:"10px 0",
+cursor:"pointer"
+}}
+>
+
+<b>{a.aiCategory || "Emergency"}</b>
+
+<br/>
+
+<small>{a.description}</small>
+
+</div>
+))}
+
+</div>
+
+</div>
+
+</div>
+
+
+{/* SYSTEM STATUS */}
+
+<div style={{
+width:"300px",
+border:"1px solid #ccc",
+borderRadius:"6px"
+}}>
+
+<div style={{
+background:"#2d5be3",
+color:"white",
+padding:"10px",
+fontWeight:"bold"
+}}>
+SYSTEM STATUS
+</div>
+
+<div style={{padding:"20px"}}>
+
+<p>🟢 Firebase: Connected</p>
+<p>🟢 Database: Online</p>
+<p>🟢 AI Detection: Running</p>
+
+<p style={{marginTop:"20px"}}>
+Current Time:
+</p>
+
+<b>{time.toLocaleTimeString()}</b>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+)
+
+}
+
+export default Profile

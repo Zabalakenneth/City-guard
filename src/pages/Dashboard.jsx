@@ -1,242 +1,375 @@
-import { useEffect, useState } from "react";
-import { db } from "../firebase";
-import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react"
+import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
+import L from "leaflet"
 
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
-import L from "leaflet";
+import { db } from "../firebase"
+import { collection, onSnapshot } from "firebase/firestore"
 
-export default function Dashboard(){
+import { getAuth, signOut } from "firebase/auth"
+import { useNavigate } from "react-router-dom"
 
-const navigate = useNavigate()
+import markerShadow from "leaflet/dist/images/marker-shadow.png"
 
-const logout = ()=>{
-localStorage.removeItem("cityguard_auth")
-navigate("/")
+
+// marker color based on category
+const getMarkerIcon = (category) => {
+
+let color = "blue"
+
+if(category === "Fire") color = "red"
+if(category === "Medical Emergency") color = "green"
+if(category === "Flood") color = "blue"
+if(category === "Crime") color = "black"
+
+return new L.Icon({
+iconUrl:`https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-${color}.png`,
+shadowUrl: markerShadow,
+iconSize:[25,41],
+iconAnchor:[12,41]
+})
+
 }
 
-const [reports,setReports] = useState([])
 
-/* MARKER ICONS */
+// map controller
+function MapController({selectedReport}){
 
-const fireIcon = new L.Icon({
-iconUrl:"https://maps.google.com/mapfiles/ms/icons/red-dot.png",
-iconSize:[32,32]
-})
-
-const medicalIcon = new L.Icon({
-iconUrl:"https://maps.google.com/mapfiles/ms/icons/green-dot.png",
-iconSize:[32,32]
-})
-
-const crimeIcon = new L.Icon({
-iconUrl:"https://maps.google.com/mapfiles/ms/icons/yellow-dot.png",
-iconSize:[32,32]
-})
-
-const floodIcon = new L.Icon({
-iconUrl:"https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
-iconSize:[32,32]
-})
-
-const getIcon = (type)=>{
-if(type==="FIRE") return fireIcon
-if(type==="MEDICAL") return medicalIcon
-if(type==="CRIME") return crimeIcon
-if(type==="FLOOD") return floodIcon
-return fireIcon
-}
+const map = useMap()
 
 useEffect(()=>{
 
-const unsubscribe = onSnapshot(collection(db,"reports"),(snapshot)=>{
+if(!selectedReport || !selectedReport.location) return
 
-const data = snapshot.docs.map((doc)=>{
+const lat = Number(selectedReport.location.latitude)
+const lng = Number(selectedReport.location.longitude)
 
-const d = doc.data()
+if(isNaN(lat) || isNaN(lng)) return
 
-return{
-id:doc.id,
-type:d.emergencyType ? d.emergencyType.toUpperCase() : "UNKNOWN",
-location:d.location || "Unknown location",
-time:d.timestamp || "Just now",
+map.setView([lat,lng],16)
 
-lat: d.latitude !== undefined ? Number(d.latitude) : null,
-lng: d.longitude !== undefined ? Number(d.longitude) : null,
+},[selectedReport])
 
-status:d.status || "NEW"
+return null
 }
 
-})
 
-console.log("REPORT DATA:",data)
+
+function Dashboard(){
+
+const auth = getAuth()
+const navigate = useNavigate()
+
+const [reports,setReports] = useState([])
+const [selectedReport,setSelectedReport] = useState(null)
+
+const [showNotif,setShowNotif] = useState(false)
+const [unread,setUnread] = useState(0)
+
+
+// FIRESTORE LISTENER
+
+useEffect(()=>{
+
+const unsub = onSnapshot(collection(db,"reports"),(snapshot)=>{
+
+const data = snapshot.docs.map(doc=>({
+id:doc.id,
+...doc.data()
+}))
 
 setReports(data)
 
-if(data.length>0){
-const audio = new Audio("/alert.mp3")
-audio.play().catch(()=>{})
-}
+setUnread(snapshot.docChanges().length)
 
 })
 
-return()=>unsubscribe()
+return ()=>unsub()
 
 },[])
 
 
-const respondToEmergency = async(id)=>{
 
-await updateDoc(doc(db,"reports",id),{
-status:"RESPONDING"
-})
+const handleLogout = async ()=>{
+
+try{
+
+await signOut(auth)
+navigate("/")
+
+}catch(err){
+
+console.log(err)
 
 }
 
-const summary = {
-FIRE: reports.filter(r=>r.type==="FIRE").length,
-MEDICAL: reports.filter(r=>r.type==="MEDICAL").length,
-CRIME: reports.filter(r=>r.type==="CRIME").length,
-FLOOD: reports.filter(r=>r.type==="FLOOD").length,
 }
+
+
+// click notification
+
+const openReport = (r)=>{
+setSelectedReport(r)
+setShowNotif(false)
+setUnread(0)
+}
+
 
 
 return(
 
-<div className="min-h-screen bg-gray-100">
+<div style={{height:"100vh",display:"flex",flexDirection:"column"}}>
 
 {/* HEADER */}
 
-<div className="bg-white border-b px-10 py-4 flex justify-between items-center shadow">
+<div style={{
+background:"#111",
+color:"white",
+padding:"12px",
+fontSize:"20px",
+fontWeight:"bold",
+display:"flex",
+justifyContent:"space-between",
+alignItems:"center"
+}}>
 
-<h1 className="text-2xl font-bold tracking-wide text-blue-700">
-CITY GUARD
-</h1>
+<div>CITYGUARD COMMAND CENTER</div>
 
-<div className="flex gap-10 font-semibold items-center">
-<button onClick={()=>navigate("/dashboard")}>HOME</button>
-<button onClick={()=>navigate("/profile")}>ADMIN</button>
-<button onClick={logout} className="text-red-600">LOGOUT</button>
+<div style={{display:"flex",gap:"15px",alignItems:"center",position:"relative"}}>
+
+{/* NOTIFICATION BELL */}
+
+<div style={{cursor:"pointer"}} onClick={()=>setShowNotif(!showNotif)}>
+
+🔔
+
+{unread>0 && (
+<span style={{
+background:"red",
+color:"white",
+borderRadius:"50%",
+padding:"3px 7px",
+fontSize:"12px",
+marginLeft:"5px"
+}}>
+{unread}
+</span>
+)}
+
 </div>
 
-</div>
 
+{/* NOTIFICATION DROPDOWN */}
 
-<div className="grid grid-cols-12 gap-6 p-8">
+{showNotif && (
 
+<div style={{
+position:"absolute",
+top:"40px",
+right:"0",
+width:"300px",
+background:"white",
+color:"black",
+borderRadius:"6px",
+boxShadow:"0 4px 10px rgba(0,0,0,0.2)",
+maxHeight:"300px",
+overflowY:"auto",
+zIndex:999
+}}>
 
-{/* LEFT PANEL */}
+{reports.length===0 && (
+<p style={{padding:"10px"}}>No alerts</p>
+)}
 
-<div className="col-span-3 space-y-6">
-
-<div className="bg-white shadow-lg rounded overflow-hidden">
-
-<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
-ACTIVE EMERGENCIES
-</div>
-
-<div className="divide-y">
-
-{reports.slice(0,3).map((r)=>(
-<div key={r.id} className="p-4 space-y-2">
-
-<div>
-🚨 <b>{r.type}</b>
-<div className="text-xs text-gray-500">{r.location}</div>
-</div>
-
-<button
-onClick={()=>respondToEmergency(r.id)}
-className="bg-blue-600 text-white px-2 py-1 text-xs rounded hover:bg-blue-700"
+{reports.slice(0,5).map((r)=>(
+<div
+key={r.id}
+onClick={()=>openReport(r)}
+style={{
+padding:"10px",
+borderBottom:"1px solid #eee",
+cursor:"pointer"
+}}
 >
-RESPOND
-</button>
+
+<b>{r.aiCategory}</b>
+
+<br/>
+
+<small>{r.description}</small>
 
 </div>
 ))}
 
 </div>
+
+)}
+
+
+
+<button
+onClick={()=>navigate("/profile")}
+style={{
+padding:"6px 12px",
+border:"none",
+background:"#444",
+color:"white",
+borderRadius:"5px",
+cursor:"pointer"
+}}
+>
+Admin Profile
+</button>
+
+
+<button
+onClick={handleLogout}
+style={{
+padding:"6px 12px",
+border:"none",
+background:"red",
+color:"white",
+borderRadius:"5px",
+cursor:"pointer"
+}}
+>
+Logout
+</button>
+
+</div>
+
 </div>
 
 
-<div className="bg-white shadow-lg rounded overflow-hidden">
+{/* STATISTICS */}
 
-<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
-ASSIGNED RESPONDERS
-</div>
+<div style={{
+display:"flex",
+gap:"20px",
+padding:"10px",
+background:"#222",
+color:"white"
+}}>
 
-<div className="divide-y">
-
-<div className="p-4 flex justify-between">
-<div>
-🚓 <b>PNP</b>
-<div className="text-xs text-gray-500">Dagupan City</div>
-</div>
-
-<span className="bg-green-600 text-white px-2 py-1 text-xs rounded">
-ON SCENE
-</span>
+<div>🔥 Fire: {reports.filter(r=>r.aiCategory==="Fire").length}</div>
+<div>🚑 Medical: {reports.filter(r=>r.aiCategory==="Medical Emergency").length}</div>
+<div>🌊 Flood: {reports.filter(r=>r.aiCategory==="Flood").length}</div>
+<div>🚓 Crime: {reports.filter(r=>r.aiCategory==="Crime").length}</div>
 
 </div>
 
-<div className="p-4 flex justify-between">
 
-<div>
-🚒 <b>BFP</b>
-<div className="text-xs text-gray-500">Dagupan City</div>
+
+{/* MAIN AREA */}
+
+<div style={{flex:1,display:"flex",overflow:"hidden"}}>
+
+{/* INCIDENT LIST */}
+
+<div style={{
+width:"300px",
+background:"#f4f4f4",
+height:"100%",
+overflowY:"auto",
+padding:"10px"
+}}>
+
+<h3>Incidents</h3>
+
+{reports.map((r)=>(
+
+<div
+key={r.id}
+onClick={()=>setSelectedReport(r)}
+style={{
+background:"white",
+padding:"10px",
+marginBottom:"10px",
+borderRadius:"6px",
+boxShadow:"0 2px 4px rgba(0,0,0,0.1)",
+cursor:"pointer"
+}}
+>
+
+<b>{r.aiCategory || "Emergency"}</b>
+
+<br/>
+
+<small>{r.description}</small>
+
 </div>
 
-<span className="bg-green-600 text-white px-2 py-1 text-xs rounded">
-ON SCENE
-</span>
+))}
 
 </div>
 
-</div>
-</div>
-
-</div>
 
 
 {/* MAP */}
 
-<div className="col-span-6 bg-white shadow-lg rounded overflow-hidden">
-
-<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
-LIVE MAP
-</div>
-
-<div className="h-[520px]">
+<div style={{flex:1}}>
 
 <MapContainer
 center={[16.0430,120.3333]}
-zoom={14}
-className="w-full h-full"
+zoom={13}
+style={{height:"100%",width:"100%"}}
 >
 
+<MapController selectedReport={selectedReport}/>
+
 <TileLayer
+attribution="© OpenStreetMap"
 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
 />
 
-{reports.map((r)=>(
-r.lat !== null && r.lng !== null &&(
+{reports.map((report)=>{
+
+if(!report.location) return null
+
+const lat = Number(report.location.latitude)
+const lng = Number(report.location.longitude)
+
+if(isNaN(lat)||isNaN(lng)) return null
+
+return(
 
 <Marker
-key={r.id}
-position={[r.lat,r.lng]}
-icon={getIcon(r.type)}
+key={report.id}
+position={[lat,lng]}
+icon={getMarkerIcon(report.aiCategory)}
 >
 
 <Popup>
-<b>{r.type}</b>
-<br/>
-{r.location}
+
+<div style={{width:"200px"}}>
+
+<b>{report.aiCategory}</b>
+
+<br/><br/>
+
+{report.description}
+
+<br/><br/>
+
+{report.imageUrl && (
+<img
+src={report.imageUrl}
+alt="report"
+style={{
+width:"100%",
+borderRadius:"6px"
+}}
+/>
+)}
+
+</div>
+
 </Popup>
 
 </Marker>
 
 )
-))}
+
+})}
 
 </MapContainer>
 
@@ -244,76 +377,10 @@ icon={getIcon(r.type)}
 
 </div>
 
-
-{/* RIGHT PANEL */}
-
-<div className="col-span-3 space-y-6">
-
-<div className="bg-white shadow-lg rounded overflow-hidden">
-
-<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
-EMERGENCY SUMMARY
-</div>
-
-<div className="p-4 grid grid-cols-2 gap-3 text-white text-center">
-
-<div className="bg-red-600 p-4 rounded">
-<div className="text-2xl font-bold">{summary.FIRE}</div>
-<div className="text-sm">🔥 FIRE</div>
-</div>
-
-<div className="bg-green-600 p-4 rounded">
-<div className="text-2xl font-bold">{summary.MEDICAL}</div>
-<div className="text-sm">🚑 MEDICAL</div>
-</div>
-
-<div className="bg-yellow-500 p-4 rounded">
-<div className="text-2xl font-bold">{summary.CRIME}</div>
-<div className="text-sm">🚓 CRIME</div>
-</div>
-
-<div className="bg-blue-600 p-4 rounded">
-<div className="text-2xl font-bold">{summary.FLOOD}</div>
-<div className="text-sm">🌊 FLOOD</div>
-</div>
-
-</div>
-
-</div>
-
-
-<div className="bg-white shadow-lg rounded overflow-hidden">
-
-<div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white px-4 py-2 font-semibold">
-NOTIFICATIONS
-</div>
-
-<div className="max-h-60 overflow-y-auto divide-y">
-
-{reports.map((report)=>(
-<div key={report.id} className="p-3 hover:bg-gray-100">
-
-<div className="flex justify-between text-sm">
-<b>🚨 {report.type}</b>
-<span className="text-gray-500 text-xs">{report.time}</span>
-</div>
-
-<div className="text-xs text-gray-600">
-{report.location}
-</div>
-
-</div>
-))}
-
-</div>
-
-</div>
-
-</div>
-
-</div>
-
 </div>
 
 )
+
 }
+
+export default Dashboard
