@@ -1,17 +1,15 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
 import L from "leaflet"
 
 import { db } from "../firebase"
-import { collection, onSnapshot } from "firebase/firestore"
+import { collection, onSnapshot, deleteDoc, doc } from "firebase/firestore"
 
 import { getAuth, signOut } from "firebase/auth"
 import { useNavigate } from "react-router-dom"
 
 import markerShadow from "leaflet/dist/images/marker-shadow.png"
 
-
-// marker color based on category
 const getMarkerIcon = (category) => {
 
 let color = "blue"
@@ -30,8 +28,6 @@ iconAnchor:[12,41]
 
 }
 
-
-// map controller
 function MapController({selectedReport}){
 
 const map = useMap()
@@ -47,12 +43,10 @@ if(isNaN(lat) || isNaN(lng)) return
 
 map.setView([lat,lng],16)
 
-},[selectedReport])
+},[selectedReport,map])
 
 return null
 }
-
-
 
 function Dashboard(){
 
@@ -65,8 +59,11 @@ const [selectedReport,setSelectedReport] = useState(null)
 const [showNotif,setShowNotif] = useState(false)
 const [unread,setUnread] = useState(0)
 
+const [activeFilter,setActiveFilter] = useState("All")
 
-// FIRESTORE LISTENER
+const [viewImage,setViewImage] = useState(null)
+
+const popupRefs = useRef({})
 
 useEffect(()=>{
 
@@ -87,7 +84,15 @@ return ()=>unsub()
 
 },[])
 
+useEffect(()=>{
 
+if(selectedReport && popupRefs.current[selectedReport.id]){
+
+popupRefs.current[selectedReport.id].openPopup()
+
+}
+
+},[selectedReport])
 
 const handleLogout = async ()=>{
 
@@ -104,8 +109,21 @@ console.log(err)
 
 }
 
+const resolveIncident = async (id)=>{
 
-// click notification
+try{
+
+await deleteDoc(doc(db,"reports",id))
+
+alert("Incident resolved")
+
+}catch(err){
+
+console.log(err)
+
+}
+
+}
 
 const openReport = (r)=>{
 setSelectedReport(r)
@@ -113,13 +131,14 @@ setShowNotif(false)
 setUnread(0)
 }
 
-
+const fireCount = reports.filter(r=>r.aiCategory==="Fire").length
+const medicalCount = reports.filter(r=>r.aiCategory==="Medical Emergency").length
+const floodCount = reports.filter(r=>r.aiCategory==="Flood").length
+const crimeCount = reports.filter(r=>r.aiCategory==="Crime").length
 
 return(
 
 <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>
-
-{/* HEADER */}
 
 <div style={{
 background:"#111",
@@ -136,8 +155,6 @@ alignItems:"center"
 
 <div style={{display:"flex",gap:"15px",alignItems:"center",position:"relative"}}>
 
-{/* NOTIFICATION BELL */}
-
 <div style={{cursor:"pointer"}} onClick={()=>setShowNotif(!showNotif)}>
 
 🔔
@@ -151,14 +168,10 @@ padding:"3px 7px",
 fontSize:"12px",
 marginLeft:"5px"
 }}>
-{unread}
-</span>
+{unread} </span>
 )}
 
 </div>
-
-
-{/* NOTIFICATION DROPDOWN */}
 
 {showNotif && (
 
@@ -177,10 +190,12 @@ zIndex:999
 }}>
 
 {reports.length===0 && (
+
 <p style={{padding:"10px"}}>No alerts</p>
 )}
 
 {reports.slice(0,5).map((r)=>(
+
 <div
 key={r.id}
 onClick={()=>openReport(r)}
@@ -204,8 +219,6 @@ cursor:"pointer"
 
 )}
 
-
-
 <button
 onClick={()=>navigate("/profile")}
 style={{
@@ -216,10 +229,10 @@ color:"white",
 borderRadius:"5px",
 cursor:"pointer"
 }}
->
-Admin Profile
-</button>
 
+>
+
+Admin Profile </button>
 
 <button
 onClick={handleLogout}
@@ -231,16 +244,14 @@ color:"white",
 borderRadius:"5px",
 cursor:"pointer"
 }}
+
 >
-Logout
-</button>
+
+Logout </button>
 
 </div>
 
 </div>
-
-
-{/* STATISTICS */}
 
 <div style={{
 display:"flex",
@@ -250,20 +261,29 @@ background:"#222",
 color:"white"
 }}>
 
-<div>🔥 Fire: {reports.filter(r=>r.aiCategory==="Fire").length}</div>
-<div>🚑 Medical: {reports.filter(r=>r.aiCategory==="Medical Emergency").length}</div>
-<div>🌊 Flood: {reports.filter(r=>r.aiCategory==="Flood").length}</div>
-<div>🚓 Crime: {reports.filter(r=>r.aiCategory==="Crime").length}</div>
+<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Fire")}>
+🔥 Fire: {fireCount}
+</div>
+
+<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Medical Emergency")}>
+🚑 Medical: {medicalCount}
+</div>
+
+<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Flood")}>
+🌊 Flood: {floodCount}
+</div>
+
+<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Crime")}>
+🚓 Crime: {crimeCount}
+</div>
+
+<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("All")}>
+📋 All
+</div>
 
 </div>
 
-
-
-{/* MAIN AREA */}
-
 <div style={{flex:1,display:"flex",overflow:"hidden"}}>
-
-{/* INCIDENT LIST */}
 
 <div style={{
 width:"300px",
@@ -275,7 +295,9 @@ padding:"10px"
 
 <h3>Incidents</h3>
 
-{reports.map((r)=>(
+{reports
+.filter(r=>activeFilter==="All" || r.aiCategory===activeFilter)
+.map((r)=>(
 
 <div
 key={r.id}
@@ -296,15 +318,31 @@ cursor:"pointer"
 
 <small>{r.description}</small>
 
+<br/><br/>
+
+<button
+onClick={(e)=>{
+e.stopPropagation()
+resolveIncident(r.id)
+}}
+style={{
+background:"green",
+color:"white",
+border:"none",
+padding:"5px 10px",
+borderRadius:"4px",
+cursor:"pointer"
+}}
+
+>
+
+Resolve </button>
+
 </div>
 
 ))}
 
 </div>
-
-
-
-{/* MAP */}
 
 <div style={{flex:1}}>
 
@@ -312,6 +350,7 @@ cursor:"pointer"
 center={[16.0430,120.3333]}
 zoom={13}
 style={{height:"100%",width:"100%"}}
+
 >
 
 <MapController selectedReport={selectedReport}/>
@@ -336,6 +375,10 @@ return(
 key={report.id}
 position={[lat,lng]}
 icon={getMarkerIcon(report.aiCategory)}
+ref={(ref)=>{
+if(ref) popupRefs.current[report.id] = ref
+}}
+
 >
 
 <Popup>
@@ -354,12 +397,31 @@ icon={getMarkerIcon(report.aiCategory)}
 <img
 src={report.imageUrl}
 alt="report"
+onClick={()=>setViewImage(report.imageUrl)}
 style={{
 width:"100%",
-borderRadius:"6px"
+borderRadius:"6px",
+cursor:"pointer"
 }}
 />
 )}
+
+<br/><br/>
+
+<button
+onClick={()=>resolveIncident(report.id)}
+style={{
+background:"green",
+color:"white",
+border:"none",
+padding:"6px 12px",
+borderRadius:"4px",
+cursor:"pointer"
+}}
+
+>
+
+Resolve Incident </button>
 
 </div>
 
@@ -376,6 +438,51 @@ borderRadius:"6px"
 </div>
 
 </div>
+
+{viewImage && (
+
+<div style={{
+position:"fixed",
+top:0,
+left:0,
+width:"100%",
+height:"100%",
+background:"rgba(0,0,0,0.9)",
+display:"flex",
+justifyContent:"center",
+alignItems:"center",
+zIndex:9999
+}}>
+
+<button
+onClick={()=>setViewImage(null)}
+style={{
+position:"absolute",
+top:"20px",
+right:"30px",
+fontSize:"30px",
+background:"none",
+border:"none",
+color:"white",
+cursor:"pointer"
+}}
+
+>
+
+✖ </button>
+
+<img
+src={viewImage}
+style={{
+maxWidth:"90%",
+maxHeight:"90%",
+borderRadius:"10px"
+}}
+/>
+
+</div>
+
+)}
 
 </div>
 

@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
+import SystemSettings from "./pages/SystemSettings";
 
 function PrivateRoute({ children }) {
   const fakeAuth = localStorage.getItem("cityguard_auth") === "1";
@@ -36,6 +37,16 @@ export default function App() {
           element={
             <PrivateRoute>
               <Profile />
+            </PrivateRoute>
+          }
+        />
+
+        {/* SYSTEM SETTINGS (Protected) */}
+        <Route
+          path="/system-settings"
+          element={
+            <PrivateRoute>
+              <SystemSettings />
             </PrivateRoute>
           }
         />
