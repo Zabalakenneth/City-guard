@@ -110,18 +110,6 @@ function ForgotPassword() {
         }}
       />
 
-      {/* BOTTOM RED BAR */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 0,
-          width: "100%",
-          height: "70px",
-          backgroundColor: "#e50914",
-          zIndex: 3,
-        }}
-      />
-
     </div>
   );
 }

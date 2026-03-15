@@ -1,5 +1,8 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
+
+import { db } from "../firebase"
+import { doc, getDoc, setDoc } from "firebase/firestore"
 
 function SystemSettings(){
 
@@ -11,6 +14,94 @@ const [showImages,setShowImages] = useState(true)
 const [enableAlerts,setEnableAlerts] = useState(true)
 const [autoCleanup,setAutoCleanup] = useState(false)
 const [cleanupDays,setCleanupDays] = useState(30)
+
+const [loading,setLoading] = useState(true)
+const [saving,setSaving] = useState(false)
+const [message,setMessage] = useState("")
+
+useEffect(()=>{
+loadSettings()
+},[])
+
+const loadSettings = async ()=>{
+
+try{
+
+const ref = doc(db,"system","settings")
+const snap = await getDoc(ref)
+
+if(snap.exists()){
+
+const data = snap.data()
+
+setAiDetection(data.aiDetection ?? true)
+setAutoZoom(data.autoZoom ?? true)
+setShowImages(data.showImages ?? true)
+setEnableAlerts(data.enableAlerts ?? true)
+setAutoCleanup(data.autoCleanup ?? false)
+setCleanupDays(data.cleanupDays ?? 30)
+
+}
+
+setLoading(false)
+
+}catch(err){
+
+console.log(err)
+setLoading(false)
+
+}
+
+}
+
+const saveSettings = async ()=>{
+
+try{
+
+setSaving(true)
+setMessage("")
+
+await setDoc(doc(db,"system","settings"),{
+
+aiDetection,
+autoZoom,
+showImages,
+enableAlerts,
+autoCleanup,
+cleanupDays:Number(cleanupDays)
+
+})
+
+setMessage("✅ Settings saved successfully")
+
+setSaving(false)
+
+}catch(err){
+
+console.log(err)
+setMessage("❌ Error saving settings")
+setSaving(false)
+
+}
+
+}
+
+const resetSettings = ()=>{
+
+setAiDetection(true)
+setAutoZoom(true)
+setShowImages(true)
+setEnableAlerts(true)
+setAutoCleanup(false)
+setCleanupDays(30)
+
+setMessage("⚠ Settings reset (not saved yet)")
+
+}
+
+if(loading){
+return <p style={{padding:"40px"}}>Loading settings...</p>
+}
 
 return(
 
@@ -82,7 +173,7 @@ AI DETECTION SETTINGS
 <input
 type="checkbox"
 checked={aiDetection}
-onChange={()=>setAiDetection(!aiDetection)}
+onChange={()=>setAiDetection(prev=>!prev)}
 />
  Enable AI Incident Detection
 </label>
@@ -91,7 +182,7 @@ onChange={()=>setAiDetection(!aiDetection)}
 <input
 type="checkbox"
 checked={autoZoom}
-onChange={()=>setAutoZoom(!autoZoom)}
+onChange={()=>setAutoZoom(prev=>!prev)}
 />
  Auto Zoom Map to Incident
 </label>
@@ -100,7 +191,7 @@ onChange={()=>setAutoZoom(!autoZoom)}
 <input
 type="checkbox"
 checked={showImages}
-onChange={()=>setShowImages(!showImages)}
+onChange={()=>setShowImages(prev=>!prev)}
 />
  Auto Show Incident Images
 </label>
@@ -113,7 +204,12 @@ onChange={()=>setShowImages(!showImages)}
 
 <div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
 
-<div style={{background:"#e33",color:"white",padding:"10px",fontWeight:"bold"}}>
+<div style={{
+background: enableAlerts ? "#e33" : "#777",
+color:"white",
+padding:"10px",
+fontWeight:"bold"
+}}>
 EMERGENCY ALERT SETTINGS
 </div>
 
@@ -123,10 +219,27 @@ EMERGENCY ALERT SETTINGS
 <input
 type="checkbox"
 checked={enableAlerts}
-onChange={()=>setEnableAlerts(!enableAlerts)}
+onChange={()=>setEnableAlerts(prev=>!prev)}
 />
  Enable Emergency Alerts
 </label>
+
+{!enableAlerts && (
+
+<div style={{
+background:"#fff3cd",
+color:"#856404",
+padding:"10px",
+borderRadius:"6px",
+fontWeight:"bold"
+}}>
+
+⚠ Emergency alerts are currently DISABLED.  
+No siren sound or popup will appear in the dashboard.
+
+</div>
+
+)}
 
 </div>
 
@@ -146,7 +259,7 @@ HISTORY SETTINGS
 <input
 type="checkbox"
 checked={autoCleanup}
-onChange={()=>setAutoCleanup(!autoCleanup)}
+onChange={()=>setAutoCleanup(prev=>!prev)}
 />
  Enable Auto Cleanup
 </label>
@@ -157,10 +270,15 @@ onChange={()=>setAutoCleanup(!autoCleanup)}
 
 <input
 type="number"
+min="1"
 value={cleanupDays}
-onChange={(e)=>setCleanupDays(e.target.value)}
+onChange={(e)=>setCleanupDays(Number(e.target.value))}
 style={{padding:"8px",width:"120px"}}
 />
+
+<small style={{color:"#666"}}>
+System will automatically delete incidents older than {cleanupDays} days
+</small>
 
 </div>
 
@@ -184,6 +302,52 @@ SYSTEM INFORMATION
 <p>Status: <b style={{color:"green"}}>Running</b></p>
 
 </div>
+
+</div>
+
+{message && (
+
+<p style={{fontWeight:"bold"}}>
+{message}
+</p>
+
+)}
+
+<div style={{display:"flex",gap:"10px"}}>
+
+<button
+onClick={saveSettings}
+disabled={saving}
+style={{
+padding:"12px",
+background:"#2d5be3",
+color:"white",
+border:"none",
+borderRadius:"6px",
+fontWeight:"bold",
+cursor:"pointer"
+}}
+>
+
+{saving ? "Saving..." : "SAVE SETTINGS"}
+
+</button>
+
+<button
+onClick={resetSettings}
+style={{
+padding:"12px",
+background:"#555",
+color:"white",
+border:"none",
+borderRadius:"6px",
+cursor:"pointer"
+}}
+>
+
+RESET DEFAULT
+
+</button>
 
 </div>
 

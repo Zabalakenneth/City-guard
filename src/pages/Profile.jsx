@@ -34,7 +34,6 @@ return ()=>clearInterval(timer)
 
 },[])
 
-// RECENT ALERTS
 useEffect(()=>{
 
 const q = query(
@@ -58,7 +57,6 @@ return ()=>unsub()
 
 },[])
 
-// ALL REPORTS
 useEffect(()=>{
 
 const unsub = onSnapshot(collection(db,"reports"),(snapshot)=>{
@@ -77,38 +75,40 @@ return ()=>unsub()
 },[])
 
 const handleLogout = async ()=>{
-
 await signOut(auth)
 navigate("/")
-
 }
 
 const openAlert = (alert)=>{
 navigate(`/dashboard?reportId=${alert.id}`)
 }
 
-// DELETE HISTORY
 const deleteHistory = async (id)=>{
 
 const confirmDelete = window.confirm("Are you sure you want to delete this incident?")
-
 if(!confirmDelete) return
 
 await deleteDoc(doc(db,"reports",id))
 
 }
 
-// INCIDENT COUNTS
 const fireCount = reports.filter(r=>r.aiCategory==="Fire").length
 const medicalCount = reports.filter(r=>r.aiCategory==="Medical Emergency").length
+const accidentCount = reports.filter(r=>r.aiCategory==="Accident").length
 const floodCount = reports.filter(r=>r.aiCategory==="Flood").length
 const crimeCount = reports.filter(r=>r.aiCategory==="Crime").length
 
-const max = Math.max(fireCount,medicalCount,floodCount,crimeCount,1)
+const max = Math.max(
+fireCount,
+medicalCount,
+accidentCount,
+floodCount,
+crimeCount,
+1
+)
 
 const bar = (count)=>`${(count/max)*100}%`
 
-// UPTIME FORMAT
 const formatUptime = ()=>{
 
 let h = Math.floor(uptime/3600)
@@ -119,9 +119,25 @@ return `${h}h ${m}m ${s}s`
 
 }
 
+const cardStyle = {
+border:"1px solid #e5e7eb",
+borderRadius:"8px",
+background:"white",
+boxShadow:"0 2px 8px rgba(0,0,0,0.06)"
+}
+
 return(
 
-<div style={{padding:"40px",fontFamily:"Arial"}}>
+<div style={{
+padding:"40px",
+fontFamily:"Arial",
+background:"#f4f6fb",
+minHeight:"100vh",
+width:"100%",
+position:"absolute",
+top:"0",
+left:"0"
+}}>
 
 <div style={{
 display:"flex",
@@ -149,18 +165,11 @@ ADMIN
 
 <div style={{display:"flex",gap:"30px",marginTop:"30px"}}>
 
-<div style={{
-width:"230px",
-border:"1px solid #ccc",
-borderRadius:"6px"
-}}>
+{/* LEFT MENU */}
 
-<div style={{
-background:"#2d5be3",
-color:"white",
-padding:"10px",
-fontWeight:"bold"
-}}>
+<div style={{width:"230px",...cardStyle}}>
+
+<div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
 ADMIN MENU
 </div>
 
@@ -168,17 +177,11 @@ ADMIN MENU
 
 <p style={{cursor:"pointer"}}>👤 Profile Info</p>
 
-<p 
-style={{cursor:"pointer"}}
-onClick={()=>navigate("/dashboard")}
->
+<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
 🚨 Incident Dashboard
 </p>
 
-<p
-style={{cursor:"pointer"}}
-onClick={()=>navigate("/system-settings")}
->
+<p style={{cursor:"pointer"}} onClick={()=>navigate("/system-settings")}>
 ⚙ System Settings
 </p>
 
@@ -186,16 +189,13 @@ onClick={()=>navigate("/system-settings")}
 
 </div>
 
-<div style={{
-flex:1,
-display:"flex",
-flexDirection:"column",
-gap:"20px"
-}}>
+{/* MAIN CONTENT */}
 
-{/* PROFILE */}
+<div style={{flex:1,display:"flex",flexDirection:"column",gap:"20px"}}>
 
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
+{/* ADMIN PROFILE */}
+
+<div style={cardStyle}>
 
 <div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
 ADMIN PROFILE
@@ -223,12 +223,11 @@ padding:"10px 20px",
 background:"#2d5be3",
 border:"none",
 color:"white",
-borderRadius:"5px",
+borderRadius:"6px",
 cursor:"pointer"
-}}>
-
+}}
+>
 LOG OUT
-
 </button>
 
 </div>
@@ -237,7 +236,7 @@ LOG OUT
 
 {/* INCIDENT ANALYTICS */}
 
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
+<div style={cardStyle}>
 
 <div style={{background:"#444",color:"white",padding:"10px",fontWeight:"bold"}}>
 INCIDENT ANALYTICS
@@ -246,25 +245,26 @@ INCIDENT ANALYTICS
 <div style={{padding:"20px"}}>
 
 <p>🔥 Fire ({fireCount})</p>
-
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
 <div style={{width:bar(fireCount),height:"12px",background:"red",borderRadius:"4px"}}/>
 </div>
 
 <p style={{marginTop:"15px"}}>🚑 Medical ({medicalCount})</p>
-
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
 <div style={{width:bar(medicalCount),height:"12px",background:"green",borderRadius:"4px"}}/>
 </div>
 
-<p style={{marginTop:"15px"}}>🌊 Flood ({floodCount})</p>
+<p style={{marginTop:"15px"}}>🚗 Accident ({accidentCount})</p>
+<div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
+<div style={{width:bar(accidentCount),height:"12px",background:"orange",borderRadius:"4px"}}/>
+</div>
 
+<p style={{marginTop:"15px"}}>🌊 Flood ({floodCount})</p>
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
 <div style={{width:bar(floodCount),height:"12px",background:"blue",borderRadius:"4px"}}/>
 </div>
 
 <p style={{marginTop:"15px"}}>🚓 Crime ({crimeCount})</p>
-
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
 <div style={{width:bar(crimeCount),height:"12px",background:"black",borderRadius:"4px"}}/>
 </div>
@@ -275,7 +275,7 @@ INCIDENT ANALYTICS
 
 {/* RECENT ALERTS */}
 
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
+<div style={cardStyle}>
 
 <div style={{background:"#e33",color:"white",padding:"10px",fontWeight:"bold"}}>
 RECENT EMERGENCY ALERTS
@@ -290,9 +290,7 @@ RECENT EMERGENCY ALERTS
 <div key={a.id} onClick={()=>openAlert(a)} style={{borderBottom:"1px solid #eee",padding:"10px 0",cursor:"pointer"}}>
 
 <b>{a.aiCategory || "Emergency"}</b>
-
 <br/>
-
 <small>{a.description || "Emergency incident reported"}</small>
 
 </div>
@@ -305,7 +303,7 @@ RECENT EMERGENCY ALERTS
 
 {/* EMERGENCY HISTORY */}
 
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
+<div style={cardStyle}>
 
 <div style={{background:"#222",color:"white",padding:"10px",fontWeight:"bold"}}>
 EMERGENCY HISTORY
@@ -318,6 +316,7 @@ EMERGENCY HISTORY
 <button onClick={()=>setHistoryFilter("All")}>All</button>
 <button onClick={()=>setHistoryFilter("Fire")}>🔥 Fire</button>
 <button onClick={()=>setHistoryFilter("Medical Emergency")}>🚑 Medical</button>
+<button onClick={()=>setHistoryFilter("Accident")}>🚗 Accident</button>
 <button onClick={()=>setHistoryFilter("Flood")}>🌊 Flood</button>
 <button onClick={()=>setHistoryFilter("Crime")}>🚓 Crime</button>
 
@@ -328,15 +327,10 @@ EMERGENCY HISTORY
 <thead>
 
 <tr style={{background:"#f5f5f5"}}>
-
 <th style={{padding:"8px",border:"1px solid #ddd"}}>Date</th>
-
 <th style={{padding:"8px",border:"1px solid #ddd"}}>Type</th>
-
 <th style={{padding:"8px",border:"1px solid #ddd"}}>Description</th>
-
 <th style={{padding:"8px",border:"1px solid #ddd"}}></th>
-
 </tr>
 
 </thead>
@@ -367,15 +361,10 @@ EMERGENCY HISTORY
 
 <span
 onClick={()=>deleteHistory(r.id)}
-style={{
-cursor:"pointer",
-color:"red",
-fontWeight:"bold"
-}}
-
+style={{cursor:"pointer",color:"red",fontWeight:"bold"}}
 >
-
-✖ </span>
+✖
+</span>
 
 </td>
 
@@ -393,7 +382,9 @@ fontWeight:"bold"
 
 </div>
 
-<div style={{width:"280px",border:"1px solid #ccc",borderRadius:"6px"}}>
+{/* SYSTEM STATUS */}
+
+<div style={{width:"280px",...cardStyle}}>
 
 <div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
 SYSTEM STATUS
