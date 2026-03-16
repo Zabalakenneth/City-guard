@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
 import L from "leaflet"
 
 import { db } from "../firebase"
-import { collection, onSnapshot, deleteDoc, doc, getDoc } from "firebase/firestore"
+import { collection, onSnapshot, deleteDoc, doc, getDoc, updateDoc } from "firebase/firestore"
 
 import { getAuth, signOut } from "firebase/auth"
 import { useNavigate } from "react-router-dom"
@@ -57,10 +57,10 @@ const auth = getAuth()
 const navigate = useNavigate()
 
 const [reports,setReports] = useState([])
+const [notifList,setNotifList] = useState([])
 const [selectedReport,setSelectedReport] = useState(null)
 
 const [showNotif,setShowNotif] = useState(false)
-const [unread,setUnread] = useState(0)
 
 const [activeFilter,setActiveFilter] = useState("All")
 
@@ -77,12 +77,28 @@ enableAlerts:true
 
 const popupRefs = useRef({})
 
-const siren = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3")
+/* SMART EMERGENCY ALERT SOUNDS */
+
+const playAlertSound = (category) => {
+
+let sound = "/siren.mp3"
+
+if(category === "Fire") sound = "/fire.mp3"
+if(category === "Medical Emergency") sound = "/ambulance.mp3"
+if(category === "Crime") sound = "/police.mp3"
+if(category === "Accident") sound = "/accident.mp3"
+if(category === "Flood") sound = "/flood.mp3"
+
+const audio = new Audio(sound)
+audio.volume = 1
+audio.play().catch(()=>{})
+
+}
+
+/* LOAD SETTINGS */
 
 useEffect(()=>{
-
 loadSettings()
-
 },[])
 
 const loadSettings = async ()=>{
@@ -102,6 +118,8 @@ console.log(err)
 
 }
 
+/* REALTIME REPORT LISTENER */
+
 useEffect(()=>{
 
 const unsub = onSnapshot(collection(db,"reports"),(snapshot)=>{
@@ -116,17 +134,20 @@ data = []
 }
 
 setReports(data)
+setNotifList(data.filter(r => !r.read))
 
-const changes = snapshot.docChanges()
+const newReports = snapshot.docChanges().filter(
+change => change.type === "added"
+)
 
-if(changes.length>0){
+if(newReports.length > 0){
 
-const newReport = changes[0].doc.data()
+const newReport = newReports[0].doc.data()
 
 if(settings.enableAlerts){
 
 setAlertPopup(newReport)
-siren.play()
+playAlertSound(newReport.aiCategory)
 
 setTimeout(()=>{
 setAlertPopup(null)
@@ -136,13 +157,13 @@ setAlertPopup(null)
 
 }
 
-setUnread(changes.length)
-
 })
 
 return ()=>unsub()
 
 },[settings])
+
+/* POPUP + IMAGE */
 
 useEffect(()=>{
 
@@ -156,6 +177,24 @@ setViewImage(selectedReport.imageUrl)
 
 },[selectedReport,settings])
 
+/* MARK AS READ */
+
+const markAsRead = async(id)=>{
+
+try{
+
+await updateDoc(doc(db,"reports",id),{
+read:true
+})
+
+}catch(err){
+console.log(err)
+}
+
+}
+
+/* LOGOUT */
+
 const handleLogout = async ()=>{
 
 try{
@@ -166,6 +205,8 @@ console.log(err)
 }
 
 }
+
+/* RESOLVE INCIDENT */
 
 const resolveIncident = async (id)=>{
 
@@ -178,11 +219,22 @@ console.log(err)
 
 }
 
+/* OPEN REPORT */
+
 const openReport = (r)=>{
+
 setSelectedReport(r)
 setShowNotif(false)
-setUnread(0)
+
+if(!r.read){
+markAsRead(r.id)
 }
+
+}
+
+/* COUNTERS */
+
+const unread = reports.filter(r=>!r.read).length
 
 const fireCount = reports.filter(r=>r.aiCategory==="Fire").length
 const medicalCount = reports.filter(r=>r.aiCategory==="Medical Emergency").length
@@ -196,7 +248,17 @@ return(
 
 {alertPopup && (
 
-<div style={{
+<div
+onClick={()=>{
+
+setSelectedReport(alertPopup)
+
+if(popupRefs.current[alertPopup.id]){
+popupRefs.current[alertPopup.id].openPopup()
+}
+
+}}
+style={{
 position:"fixed",
 top:"20px",
 left:"50%",
@@ -207,10 +269,13 @@ padding:"15px 25px",
 borderRadius:"8px",
 fontWeight:"bold",
 zIndex:9999,
-boxShadow:"0 5px 20px rgba(0,0,0,0.3)"
-}}>
+cursor:"pointer"
+}}
+>
 
-🚨 NEW EMERGENCY ALERT: {alertPopup.aiCategory || "Incident"}
+🚨 NEW EMERGENCY ALERT: {alertPopup.aiCategory || "Incident"}  
+<br/>
+<small>Click to view location</small>
 
 </div>
 
@@ -224,8 +289,7 @@ fontSize:"20px",
 fontWeight:"bold",
 display:"flex",
 justifyContent:"space-between",
-alignItems:"center",
-boxShadow:"0 4px 10px rgba(0,0,0,0.3)"
+alignItems:"center"
 }}>
 
 <div>CITYGUARD COMMAND CENTER</div>
@@ -262,16 +326,47 @@ boxShadow:"0 4px 10px rgba(0,0,0,0.2)",
 zIndex:999
 }}>
 
-<div style={{padding:"10px",fontWeight:"bold",borderBottom:"1px solid #eee"}}>
-Notifications
+<div
+style={{
+display:"flex",
+justifyContent:"space-between",
+alignItems:"center",
+padding:"10px",
+fontWeight:"bold",
+borderBottom:"1px solid #eee"
+}}
+>
+
+<span>Notifications</span>
+
+<button
+onClick={()=>{
+
+setNotifList([])
+
+}}
+style={{
+background:"#ff4d4d",
+color:"white",
+border:"none",
+padding:"4px 10px",
+borderRadius:"6px",
+cursor:"pointer",
+fontSize:"12px"
+}}
+>
+
+Clear
+
+</button>
+
 </div>
 
 {reports.length===0 && (
-
 <p style={{padding:"10px"}}>No alerts</p>
 )}
 
-{reports.slice().reverse().slice(0,5).map((r)=>(
+{notifList.slice().reverse().slice(0,5).map((r)=>(
 
 <div
 key={r.id}
@@ -279,11 +374,25 @@ onClick={()=>openReport(r)}
 style={{
 padding:"10px",
 borderBottom:"1px solid #eee",
-cursor:"pointer"
+cursor:"pointer",
+background:r.read ? "white" : "#e6f0ff"
 }}
 >
 
-<b>{r.aiCategory || "Emergency"}</b> <br/> <small>{r.description}</small>
+<b>{r.aiCategory || "Emergency"}</b>
+
+<br/>
+
+<small>{r.description}</small>
+
+{!r.read && (
+<span style={{
+color:"red",
+fontSize:"12px"
+}}>
+ ● new
+</span>
+)}
 
 </div>
 
@@ -303,10 +412,11 @@ color:"white",
 borderRadius:"5px",
 cursor:"pointer"
 }}
-
 >
 
-Admin Profile </button>
+Admin Profile
+
+</button>
 
 <button
 onClick={handleLogout}
@@ -318,10 +428,11 @@ color:"white",
 borderRadius:"5px",
 cursor:"pointer"
 }}
-
 >
 
-Logout </button>
+Logout
+
+</button>
 
 </div>
 
@@ -373,7 +484,13 @@ cursor:"pointer"
 }}
 >
 
-<b>{r.aiCategory || "Emergency"}</b> <br/> <small>{r.description}</small> <br/><br/>
+<b>{r.aiCategory || "Emergency"}</b>
+
+<br/>
+
+<small>{r.description}</small>
+
+<br/><br/>
 
 <button
 onClick={(e)=>{
@@ -388,10 +505,11 @@ padding:"5px 10px",
 borderRadius:"4px",
 cursor:"pointer"
 }}
-
 >
 
-Resolve </button>
+Resolve
+
+</button>
 
 </div>
 
@@ -428,7 +546,6 @@ icon={getMarkerIcon(report.aiCategory)}
 ref={(ref)=>{
 if(ref) popupRefs.current[report.id] = ref
 }}
-
 >
 
 <Popup>
@@ -450,7 +567,6 @@ src={report.imageUrl}
 alt="report"
 onClick={()=>setViewImage(report.imageUrl)}
 style={{width:"100%",borderRadius:"6px",cursor:"pointer"}}
-
 />
 
 )}
@@ -467,10 +583,11 @@ padding:"6px 12px",
 borderRadius:"4px",
 cursor:"pointer"
 }}
-
 >
 
-Resolve Incident </button>
+Resolve Incident
+
+</button>
 
 </div>
 
@@ -515,10 +632,11 @@ border:"none",
 color:"white",
 cursor:"pointer"
 }}
-
 >
 
-✖ </button>
+✖
+
+</button>
 
 <img
 src={viewImage}
