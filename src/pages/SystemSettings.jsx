@@ -6,358 +6,311 @@ import { doc, getDoc, setDoc } from "firebase/firestore"
 
 function SystemSettings(){
 
-const navigate = useNavigate()
+  const navigate = useNavigate()
 
-const [aiDetection,setAiDetection] = useState(true)
-const [autoZoom,setAutoZoom] = useState(true)
-const [showImages,setShowImages] = useState(true)
-const [enableAlerts,setEnableAlerts] = useState(true)
-const [autoCleanup,setAutoCleanup] = useState(false)
-const [cleanupDays,setCleanupDays] = useState(30)
+  const [aiDetection,setAiDetection] = useState(true)
+  const [autoZoom,setAutoZoom] = useState(true)
+  const [showImages,setShowImages] = useState(true)
+  const [enableAlerts,setEnableAlerts] = useState(true)
+  const [autoCleanup,setAutoCleanup] = useState(false)
+  const [cleanupDays,setCleanupDays] = useState(30)
 
-const [loading,setLoading] = useState(true)
-const [saving,setSaving] = useState(false)
-const [message,setMessage] = useState("")
+  const [loading,setLoading] = useState(true)
+  const [saving,setSaving] = useState(false)
+  const [message,setMessage] = useState("")
 
-useEffect(()=>{
-loadSettings()
-},[])
+  useEffect(()=>{
+    loadSettings()
+  },[])
 
-const loadSettings = async ()=>{
+  const loadSettings = async ()=>{
 
-try{
+    try{
 
-const ref = doc(db,"system","settings")
-const snap = await getDoc(ref)
+      const ref = doc(db,"system","settings")
+      const snap = await getDoc(ref)
 
-if(snap.exists()){
+      if(snap.exists()){
 
-const data = snap.data()
+        const data = snap.data()
 
-setAiDetection(data.aiDetection ?? true)
-setAutoZoom(data.autoZoom ?? true)
-setShowImages(data.showImages ?? true)
-setEnableAlerts(data.enableAlerts ?? true)
-setAutoCleanup(data.autoCleanup ?? false)
-setCleanupDays(data.cleanupDays ?? 30)
+        setAiDetection(data.aiDetection ?? true)
+        setAutoZoom(data.autoZoom ?? true)
+        setShowImages(data.showImages ?? true)
+        setEnableAlerts(data.enableAlerts ?? true)
+        setAutoCleanup(data.autoCleanup ?? false)
+        setCleanupDays(data.cleanupDays ?? 30)
 
-}
+      }
 
-setLoading(false)
+      setLoading(false)
 
-}catch(err){
+    }catch(err){
 
-console.log(err)
-setLoading(false)
+      console.log(err)
+      setLoading(false)
 
-}
+    }
 
-}
+  }
 
-const saveSettings = async ()=>{
+  const saveSettings = async ()=>{
 
-try{
+    try{
 
-setSaving(true)
-setMessage("")
+      setSaving(true)
+      setMessage("")
 
-await setDoc(doc(db,"system","settings"),{
+      await setDoc(doc(db,"system","settings"),{
+        aiDetection,
+        autoZoom,
+        showImages,
+        enableAlerts,
+        autoCleanup,
+        cleanupDays: Number(cleanupDays)
+      })
 
-aiDetection,
-autoZoom,
-showImages,
-enableAlerts,
-autoCleanup,
-cleanupDays:Number(cleanupDays)
+      setMessage("✅ Settings saved successfully")
+      setSaving(false)
 
-})
+    }catch(err){
 
-setMessage("✅ Settings saved successfully")
+      console.log(err)
+      setMessage("❌ Error saving settings")
+      setSaving(false)
 
-setSaving(false)
+    }
 
-}catch(err){
+  }
 
-console.log(err)
-setMessage("❌ Error saving settings")
-setSaving(false)
+  const resetSettings = ()=>{
 
-}
+    setAiDetection(true)
+    setAutoZoom(true)
+    setShowImages(true)
+    setEnableAlerts(true)
+    setAutoCleanup(false)
+    setCleanupDays(30)
 
-}
+    setMessage("⚠ Settings reset (not saved yet)")
 
-const resetSettings = ()=>{
+  }
 
-setAiDetection(true)
-setAutoZoom(true)
-setShowImages(true)
-setEnableAlerts(true)
-setAutoCleanup(false)
-setCleanupDays(30)
+  if(loading){
+    return <p style={{padding:"40px"}}>Loading settings...</p>
+  }
 
-setMessage("⚠ Settings reset (not saved yet)")
+  return(
 
-}
+  <div style={{padding:"40px",fontFamily:"Arial"}}>
 
-if(loading){
-return <p style={{padding:"40px"}}>Loading settings...</p>
-}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
 
-return(
+      <h1>CITY GUARD</h1>
 
-<div style={{padding:"40px",fontFamily:"Arial"}}>
+      <div style={{display:"flex",gap:"20px"}}>
 
-<div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
+          HOME
+        </p>
 
-<h1>CITY GUARD</h1>
+        <p style={{cursor:"pointer"}} onClick={()=>navigate("/profile")}>
+          ADMIN
+        </p>
 
-<div style={{display:"flex",gap:"20px"}}>
+      </div>
 
-<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
-HOME
-</p>
+    </div>
 
-<p style={{cursor:"pointer"}} onClick={()=>navigate("/profile")}>
-ADMIN
-</p>
+    <hr/>
 
-</div>
+    <div style={{display:"flex",gap:"30px",marginTop:"30px"}}>
 
-</div>
+      {/* LEFT MENU */}
+      <div style={{width:"230px",border:"1px solid #ccc",borderRadius:"6px"}}>
 
-<hr/>
+        <div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
+          ADMIN MENU
+        </div>
 
-<div style={{display:"flex",gap:"30px",marginTop:"30px"}}>
+        <div style={{padding:"15px",display:"flex",flexDirection:"column",gap:"12px"}}>
 
-{/* LEFT MENU */}
+          <p style={{cursor:"pointer"}} onClick={()=>navigate("/profile")}>
+            👤 Profile Info
+          </p>
 
-<div style={{width:"230px",border:"1px solid #ccc",borderRadius:"6px"}}>
+          <p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
+            🚨 Incident Dashboard
+          </p>
 
-<div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
-ADMIN MENU
-</div>
+          <p style={{color:"blue"}}>
+            ⚙ System Settings
+          </p>
 
-<div style={{padding:"15px",display:"flex",flexDirection:"column",gap:"12px"}}>
+        </div>
 
-<p style={{cursor:"pointer"}} onClick={()=>navigate("/profile")}>
-👤 Profile Info
-</p>
+      </div>
 
-<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
-🚨 Incident Dashboard
-</p>
+      {/* MAIN SETTINGS */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",gap:"20px"}}>
 
-<p style={{color:"blue"}}>
-⚙ System Settings
-</p>
+        {/* AI SETTINGS */}
+        <div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
 
-</div>
+          <div style={{background:"#444",color:"white",padding:"10px",fontWeight:"bold"}}>
+            AI DETECTION SETTINGS
+          </div>
 
-</div>
+          <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:"15px"}}>
 
-{/* MAIN SETTINGS */}
+            <label>
+              <input type="checkbox" checked={aiDetection} onChange={()=>setAiDetection(prev=>!prev)} />
+              Enable AI Incident Detection
+            </label>
 
-<div style={{flex:1,display:"flex",flexDirection:"column",gap:"20px"}}>
+            <label>
+              <input type="checkbox" checked={autoZoom} onChange={()=>setAutoZoom(prev=>!prev)} />
+              Auto Zoom Map to Incident
+            </label>
 
-{/* AI SETTINGS */}
+            <label>
+              <input type="checkbox" checked={showImages} onChange={()=>setShowImages(prev=>!prev)} />
+              Auto Show Incident Images
+            </label>
 
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
+          </div>
 
-<div style={{background:"#444",color:"white",padding:"10px",fontWeight:"bold"}}>
-AI DETECTION SETTINGS
-</div>
+        </div>
 
-<div style={{padding:"20px",display:"flex",flexDirection:"column",gap:"15px"}}>
+        {/* ALERT SETTINGS */}
+        <div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
 
-<label>
-<input
-type="checkbox"
-checked={aiDetection}
-onChange={()=>setAiDetection(prev=>!prev)}
-/>
- Enable AI Incident Detection
-</label>
+          <div style={{
+            background: enableAlerts ? "#e33" : "#777",
+            color:"white",
+            padding:"10px",
+            fontWeight:"bold"
+          }}>
+            EMERGENCY ALERT SETTINGS
+          </div>
 
-<label>
-<input
-type="checkbox"
-checked={autoZoom}
-onChange={()=>setAutoZoom(prev=>!prev)}
-/>
- Auto Zoom Map to Incident
-</label>
+          <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:"15px"}}>
 
-<label>
-<input
-type="checkbox"
-checked={showImages}
-onChange={()=>setShowImages(prev=>!prev)}
-/>
- Auto Show Incident Images
-</label>
+            <label>
+              <input type="checkbox" checked={enableAlerts} onChange={()=>setEnableAlerts(prev=>!prev)} />
+              Enable Emergency Alerts
+            </label>
+
+            {!enableAlerts && (
+              <div style={{
+                background:"#fff3cd",
+                color:"#856404",
+                padding:"10px",
+                borderRadius:"6px",
+                fontWeight:"bold"
+              }}>
+                ⚠ Emergency alerts are currently DISABLED.  
+                No siren sound or popup will appear in the dashboard.
+              </div>
+            )}
 
-</div>
+          </div>
 
-</div>
+        </div>
 
-{/* ALERT SETTINGS */}
+        {/* HISTORY SETTINGS */}
+        <div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
 
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
+          <div style={{background:"#222",color:"white",padding:"10px",fontWeight:"bold"}}>
+            HISTORY SETTINGS
+          </div>
 
-<div style={{
-background: enableAlerts ? "#e33" : "#777",
-color:"white",
-padding:"10px",
-fontWeight:"bold"
-}}>
-EMERGENCY ALERT SETTINGS
-</div>
+          <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:"15px"}}>
 
-<div style={{padding:"20px",display:"flex",flexDirection:"column",gap:"15px"}}>
+            <label>
+              <input type="checkbox" checked={autoCleanup} onChange={()=>setAutoCleanup(prev=>!prev)} />
+              Enable Auto Cleanup
+            </label>
 
-<label>
-<input
-type="checkbox"
-checked={enableAlerts}
-onChange={()=>setEnableAlerts(prev=>!prev)}
-/>
- Enable Emergency Alerts
-</label>
+            <div>
+              <p>Auto Delete History After (days)</p>
 
-{!enableAlerts && (
+              <input
+                type="number"
+                min="1"
+                value={cleanupDays}
+                onChange={(e)=>setCleanupDays(Number(e.target.value))}
+                style={{padding:"8px",width:"120px"}}
+              />
 
-<div style={{
-background:"#fff3cd",
-color:"#856404",
-padding:"10px",
-borderRadius:"6px",
-fontWeight:"bold"
-}}>
+              <small style={{color:"#666"}}>
+                System will automatically delete incidents older than {cleanupDays} days
+              </small>
+            </div>
 
-⚠ Emergency alerts are currently DISABLED.  
-No siren sound or popup will appear in the dashboard.
+          </div>
 
-</div>
+        </div>
 
-)}
+        {/* SYSTEM INFO */}
+        <div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
 
-</div>
+          <div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
+            SYSTEM INFORMATION
+          </div>
 
-</div>
+          <div style={{padding:"20px"}}>
+            <p>System Version: <b>1.0</b></p>
+            <p>Database: <b>Firebase</b></p>
+            <p>AI Engine: <b>TensorFlow</b></p>
+            <p>Status: <b style={{color:"green"}}>Running</b></p>
+          </div>
 
-{/* HISTORY SETTINGS */}
+        </div>
 
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
+        {message && <p style={{fontWeight:"bold"}}>{message}</p>}
 
-<div style={{background:"#222",color:"white",padding:"10px",fontWeight:"bold"}}>
-HISTORY SETTINGS
-</div>
+        <div style={{display:"flex",gap:"10px"}}>
 
-<div style={{padding:"20px",display:"flex",flexDirection:"column",gap:"15px"}}>
+          <button
+            onClick={saveSettings}
+            disabled={saving}
+            style={{
+              padding:"12px",
+              background:"#2d5be3",
+              color:"white",
+              border:"none",
+              borderRadius:"6px",
+              fontWeight:"bold",
+              cursor:"pointer"
+            }}
+          >
+            {saving ? "Saving..." : "SAVE SETTINGS"}
+          </button>
 
-<label>
-<input
-type="checkbox"
-checked={autoCleanup}
-onChange={()=>setAutoCleanup(prev=>!prev)}
-/>
- Enable Auto Cleanup
-</label>
+          <button
+            onClick={resetSettings}
+            style={{
+              padding:"12px",
+              background:"#555",
+              color:"white",
+              border:"none",
+              borderRadius:"6px",
+              cursor:"pointer"
+            }}
+          >
+            RESET DEFAULT
+          </button>
 
-<div>
+        </div>
 
-<p>Auto Delete History After (days)</p>
+      </div>
 
-<input
-type="number"
-min="1"
-value={cleanupDays}
-onChange={(e)=>setCleanupDays(Number(e.target.value))}
-style={{padding:"8px",width:"120px"}}
-/>
+    </div>
 
-<small style={{color:"#666"}}>
-System will automatically delete incidents older than {cleanupDays} days
-</small>
+  </div>
 
-</div>
-
-</div>
-
-</div>
-
-{/* SYSTEM INFO */}
-
-<div style={{border:"1px solid #ccc",borderRadius:"6px"}}>
-
-<div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
-SYSTEM INFORMATION
-</div>
-
-<div style={{padding:"20px"}}>
-
-<p>System Version: <b>1.0</b></p>
-<p>Database: <b>Firebase</b></p>
-<p>AI Engine: <b>TensorFlow</b></p>
-<p>Status: <b style={{color:"green"}}>Running</b></p>
-
-</div>
-
-</div>
-
-{message && (
-
-<p style={{fontWeight:"bold"}}>
-{message}
-</p>
-
-)}
-
-<div style={{display:"flex",gap:"10px"}}>
-
-<button
-onClick={saveSettings}
-disabled={saving}
-style={{
-padding:"12px",
-background:"#2d5be3",
-color:"white",
-border:"none",
-borderRadius:"6px",
-fontWeight:"bold",
-cursor:"pointer"
-}}
->
-
-{saving ? "Saving..." : "SAVE SETTINGS"}
-
-</button>
-
-<button
-onClick={resetSettings}
-style={{
-padding:"12px",
-background:"#555",
-color:"white",
-border:"none",
-borderRadius:"6px",
-cursor:"pointer"
-}}
->
-
-RESET DEFAULT
-
-</button>
-
-</div>
-
-</div>
-
-</div>
-
-</div>
-
-)
+  )
 
 }
 
