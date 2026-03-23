@@ -3,7 +3,14 @@ import { getAuth, signOut } from "firebase/auth"
 import { useNavigate } from "react-router-dom"
 
 import { db } from "../firebase"
-import { collection, query, orderBy, limit, onSnapshot, deleteDoc, doc } from "firebase/firestore"
+import {
+  collection,
+  query,
+  limit,
+  onSnapshot,
+  doc,
+  updateDoc
+} from "firebase/firestore"
 
 function Profile(){
 
@@ -18,8 +25,8 @@ const [reports,setReports] = useState([])
 const [uptime,setUptime] = useState(0)
 const [historyFilter,setHistoryFilter] = useState("All")
 
+// USER + TIME
 useEffect(()=>{
-
 setUser(auth.currentUser)
 
 const loginTime = new Date()
@@ -31,23 +38,25 @@ setUptime(prev=>prev+1)
 },1000)
 
 return ()=>clearInterval(timer)
-
 },[])
 
+
+// ALERTS (ACTIVE ONLY)
 useEffect(()=>{
 
 const q = query(
 collection(db,"reports"),
-orderBy("timestamp","desc"),
-limit(5)
+limit(10)
 )
 
 const unsub = onSnapshot(q,(snapshot)=>{
 
-const data = snapshot.docs.map(doc=>({
+const data = snapshot.docs
+.map(doc=>({
 id:doc.id,
 ...doc.data()
 }))
+.filter(item => item.status !== "resolved")
 
 setAlerts(data)
 
@@ -57,6 +66,8 @@ return ()=>unsub()
 
 },[])
 
+
+// ALL REPORTS
 useEffect(()=>{
 
 const unsub = onSnapshot(collection(db,"reports"),(snapshot)=>{
@@ -74,6 +85,21 @@ return ()=>unsub()
 
 },[])
 
+
+// RESOLVE INCIDENT
+const resolveIncident = async (id)=>{
+if(!window.confirm("Mark this as resolved?")) return
+
+try{
+await updateDoc(doc(db,"reports",id),{
+status: "resolved",
+resolvedAt: new Date()
+})
+}catch(err){
+console.error("Resolve error:", err)
+}
+}
+
 const handleLogout = async ()=>{
 await signOut(auth)
 navigate("/")
@@ -83,15 +109,8 @@ const openAlert = (alert)=>{
 navigate(`/dashboard?reportId=${alert.id}`)
 }
 
-const deleteHistory = async (id)=>{
 
-const confirmDelete = window.confirm("Are you sure you want to delete this incident?")
-if(!confirmDelete) return
-
-await deleteDoc(doc(db,"reports",id))
-
-}
-
+// ANALYTICS
 const fireCount = reports.filter(r=>r.aiCategory==="Fire").length
 const medicalCount = reports.filter(r=>r.aiCategory==="Medical Emergency").length
 const accidentCount = reports.filter(r=>r.aiCategory==="Accident").length
@@ -110,13 +129,10 @@ crimeCount,
 const bar = (count)=>`${(count/max)*100}%`
 
 const formatUptime = ()=>{
-
 let h = Math.floor(uptime/3600)
 let m = Math.floor((uptime%3600)/60)
 let s = uptime%60
-
 return `${h}h ${m}m ${s}s`
-
 }
 
 const cardStyle = {
@@ -139,6 +155,7 @@ top:"0",
 left:"0"
 }}>
 
+{/* HEADER */}
 <div style={{
 display:"flex",
 justifyContent:"space-between",
@@ -148,15 +165,8 @@ alignItems:"center"
 <h1>CITY GUARD</h1>
 
 <div style={{display:"flex",gap:"20px"}}>
-
-<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
-HOME
-</p>
-
-<p style={{color:"blue"}}>
-ADMIN
-</p>
-
+<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>HOME</p>
+<p style={{color:"blue"}}>ADMIN</p>
 </div>
 
 </div>
@@ -166,43 +176,28 @@ ADMIN
 <div style={{display:"flex",gap:"30px",marginTop:"30px"}}>
 
 {/* LEFT MENU */}
-
 <div style={{width:"230px",...cardStyle}}>
-
 <div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
 ADMIN MENU
 </div>
 
 <div style={{padding:"15px",display:"flex",flexDirection:"column",gap:"12px"}}>
-
-<p style={{cursor:"pointer"}}>👤 Profile Info</p>
-
-<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>
-🚨 Incident Dashboard
-</p>
-
-<p style={{cursor:"pointer"}} onClick={()=>navigate("/system-settings")}>
-⚙ System Settings
-</p>
-
+<p>👤 Profile Info</p>
+<p style={{cursor:"pointer"}} onClick={()=>navigate("/dashboard")}>🚨 Incident Dashboard</p>
+<p style={{cursor:"pointer"}} onClick={()=>navigate("/system-settings")}>⚙ System Settings</p>
+</div>
 </div>
 
-</div>
-
-{/* MAIN CONTENT */}
-
+{/* MAIN */}
 <div style={{flex:1,display:"flex",flexDirection:"column",gap:"20px"}}>
 
-{/* ADMIN PROFILE */}
-
+{/* PROFILE */}
 <div style={cardStyle}>
-
 <div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
 ADMIN PROFILE
 </div>
 
 <div style={{padding:"20px"}}>
-
 <p><b>Name</b></p>
 <p>{user?.displayName || "Administrator"}</p>
 
@@ -215,9 +210,7 @@ ADMIN PROFILE
 <p><b>Last Login</b></p>
 <p>{lastLogin?.toLocaleString()}</p>
 
-<button
-onClick={handleLogout}
-style={{
+<button onClick={handleLogout} style={{
 marginTop:"20px",
 padding:"10px 20px",
 background:"#2d5be3",
@@ -225,19 +218,14 @@ border:"none",
 color:"white",
 borderRadius:"6px",
 cursor:"pointer"
-}}
->
+}}>
 LOG OUT
 </button>
-
+</div>
 </div>
 
-</div>
-
-{/* INCIDENT ANALYTICS */}
-
+{/* ANALYTICS */}
 <div style={cardStyle}>
-
 <div style={{background:"#444",color:"white",padding:"10px",fontWeight:"bold"}}>
 INCIDENT ANALYTICS
 </div>
@@ -246,126 +234,117 @@ INCIDENT ANALYTICS
 
 <p>🔥 Fire ({fireCount})</p>
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
-<div style={{width:bar(fireCount),height:"12px",background:"red",borderRadius:"4px"}}/>
+<div style={{width:bar(fireCount),height:"12px",background:"red"}}/>
 </div>
 
 <p style={{marginTop:"15px"}}>🚑 Medical ({medicalCount})</p>
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
-<div style={{width:bar(medicalCount),height:"12px",background:"green",borderRadius:"4px"}}/>
+<div style={{width:bar(medicalCount),height:"12px",background:"green"}}/>
 </div>
 
 <p style={{marginTop:"15px"}}>🚗 Accident ({accidentCount})</p>
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
-<div style={{width:bar(accidentCount),height:"12px",background:"orange",borderRadius:"4px"}}/>
+<div style={{width:bar(accidentCount),height:"12px",background:"orange"}}/>
 </div>
 
 <p style={{marginTop:"15px"}}>🌊 Flood ({floodCount})</p>
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
-<div style={{width:bar(floodCount),height:"12px",background:"blue",borderRadius:"4px"}}/>
+<div style={{width:bar(floodCount),height:"12px",background:"blue"}}/>
 </div>
 
 <p style={{marginTop:"15px"}}>🚓 Crime ({crimeCount})</p>
 <div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
-<div style={{width:bar(crimeCount),height:"12px",background:"black",borderRadius:"4px"}}/>
+<div style={{width:bar(crimeCount),height:"12px",background:"black"}}/>
 </div>
 
 </div>
-
 </div>
 
-{/* RECENT ALERTS */}
-
+{/* ALERTS */}
 <div style={cardStyle}>
-
 <div style={{background:"#e33",color:"white",padding:"10px",fontWeight:"bold"}}>
 RECENT EMERGENCY ALERTS
 </div>
 
 <div style={{padding:"15px"}}>
-
 {alerts.length===0 && <p>No alerts</p>}
 
 {alerts.map((a)=>(
 
-<div key={a.id} onClick={()=>openAlert(a)} style={{borderBottom:"1px solid #eee",padding:"10px 0",cursor:"pointer"}}>
+<div key={a.id} style={{
+borderBottom:"1px solid #eee",
+padding:"10px 0",
+display:"flex",
+justifyContent:"space-between",
+alignItems:"center"
+}}>
 
-<b>{a.aiCategory || "Emergency"}</b>
+<div onClick={()=>openAlert(a)} style={{cursor:"pointer"}}>
+<b>{a.aiCategory}</b>
 <br/>
-<small>{a.description || "Emergency incident reported"}</small>
+<small>{a.description}</small>
+</div>
+
+<span
+onClick={()=>resolveIncident(a.id)}
+style={{cursor:"pointer",color:"green",fontWeight:"bold"}}
+>
+✔ Resolve
+</span>
 
 </div>
 
 ))}
 
 </div>
-
 </div>
 
-{/* EMERGENCY HISTORY */}
-
+{/* HISTORY */}
 <div style={cardStyle}>
-
 <div style={{background:"#222",color:"white",padding:"10px",fontWeight:"bold"}}>
-EMERGENCY HISTORY
+EMERGENCY HISTORY (RESOLVED)
 </div>
 
 <div style={{padding:"20px"}}>
 
 <div style={{marginBottom:"15px",display:"flex",gap:"10px"}}>
-
 <button onClick={()=>setHistoryFilter("All")}>All</button>
 <button onClick={()=>setHistoryFilter("Fire")}>🔥 Fire</button>
 <button onClick={()=>setHistoryFilter("Medical Emergency")}>🚑 Medical</button>
 <button onClick={()=>setHistoryFilter("Accident")}>🚗 Accident</button>
 <button onClick={()=>setHistoryFilter("Flood")}>🌊 Flood</button>
 <button onClick={()=>setHistoryFilter("Crime")}>🚓 Crime</button>
-
 </div>
 
 <table style={{width:"100%",borderCollapse:"collapse"}}>
-
 <thead>
-
 <tr style={{background:"#f5f5f5"}}>
-<th style={{padding:"8px",border:"1px solid #ddd"}}>Date</th>
-<th style={{padding:"8px",border:"1px solid #ddd"}}>Type</th>
-<th style={{padding:"8px",border:"1px solid #ddd"}}>Description</th>
-<th style={{padding:"8px",border:"1px solid #ddd"}}></th>
+<th>Date</th>
+<th>Type</th>
+<th>Description</th>
+<th>Status</th>
 </tr>
-
 </thead>
 
 <tbody>
 
 {reports
+.filter(r => r.status === "resolved")
 .filter(r => historyFilter==="All" || r.aiCategory===historyFilter)
-.slice()
-.reverse()
+.sort((a,b)=>{
+const aTime = a.resolvedAt?.seconds || 0
+const bTime = b.resolvedAt?.seconds || 0
+return bTime - aTime
+})
 .map((r)=>(
 
 <tr key={r.id}>
+<td>{r.resolvedAt?.toDate?.().toLocaleString?.() || "No date"}</td>
+<td>{r.aiCategory}</td>
+<td>{r.description}</td>
 
-<td style={{padding:"8px",border:"1px solid #ddd"}}>
-{r.timestamp?.toDate?.().toLocaleString?.() || "Unknown"}
-</td>
-
-<td style={{padding:"8px",border:"1px solid #ddd"}}>
-{r.aiCategory || "Emergency"}
-</td>
-
-<td style={{padding:"8px",border:"1px solid #ddd"}}>
-{r.description}
-</td>
-
-<td style={{padding:"8px",border:"1px solid #ddd",textAlign:"center"}}>
-
-<span
-onClick={()=>deleteHistory(r.id)}
-style={{cursor:"pointer",color:"red",fontWeight:"bold"}}
->
-✖
-</span>
-
+<td style={{color:"green",fontWeight:"bold"}}>
+RESOLVED
 </td>
 
 </tr>
@@ -373,25 +352,20 @@ style={{cursor:"pointer",color:"red",fontWeight:"bold"}}
 ))}
 
 </tbody>
-
 </table>
 
 </div>
-
 </div>
 
 </div>
 
 {/* SYSTEM STATUS */}
-
 <div style={{width:"280px",...cardStyle}}>
-
 <div style={{background:"#2d5be3",color:"white",padding:"10px",fontWeight:"bold"}}>
 SYSTEM STATUS
 </div>
 
 <div style={{padding:"20px"}}>
-
 <p>🟢 Firebase: Connected</p>
 <p>🟢 Database: Online</p>
 <p>🟢 AI Detection: Running</p>
@@ -401,15 +375,11 @@ SYSTEM STATUS
 
 <p style={{marginTop:"20px"}}>System Uptime</p>
 <b>{formatUptime()}</b>
-
+</div>
 </div>
 
 </div>
-
 </div>
-
-</div>
-
 )
 
 }
