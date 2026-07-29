@@ -74,48 +74,48 @@ autoZoom:true,
 showImages:true,
 enableAlerts:true
 })
-
+const [alertedReports,setAlertedReports] = useState({})
 const popupRefs = useRef({})
 
 /* SMART EMERGENCY ALERT SOUNDS */
 
-const playAlertSound = (category) => {
+const audioRef = useRef(null)
+
+const playAlertSound = (type, category) => {
 
 let sound = "/siren.mp3"
 
+// 🎯 PRIORITY: WARNING / CRITICAL
+if(type === "warning") sound = "/warning.mp3"
+if(type === "critical") sound = "/critical.mp3"
+
+// fallback: category sounds (for new incidents)
+if(!type){
 if(category === "Fire") sound = "/fire.mp3"
 if(category === "Medical Emergency") sound = "/ambulance.mp3"
 if(category === "Crime") sound = "/police.mp3"
 if(category === "Accident") sound = "/accident.mp3"
 if(category === "Flood") sound = "/flood.mp3"
+}
 
+// 🛑 stop previous sound
+if(audioRef.current){
+audioRef.current.pause()
+audioRef.current.currentTime = 0
+}
+
+// 🔊 play new sound
 const audio = new Audio(sound)
+
+// 🚨 loop pag critical
+if(type === "critical"){
+audio.loop = true
+}
+
 audio.volume = 1
 audio.play().catch(()=>{})
 
-}
-
-/* LOAD SETTINGS */
-
-useEffect(()=>{
-loadSettings()
-},[])
-
-const loadSettings = async ()=>{
-
-try{
-
-const ref = doc(db,"system","settings")
-const snap = await getDoc(ref)
-
-if(snap.exists()){
-setSettings(snap.data())
-}
-
-}catch(err){
-console.log(err)
-}
-
+audioRef.current = audio
 }
 
 /* REALTIME REPORT LISTENER */
@@ -147,7 +147,7 @@ const newReport = newReports[0].doc.data()
 if(settings.enableAlerts){
 
 setAlertPopup(newReport)
-playAlertSound(newReport.aiCategory)
+playAlertSound(null, newReport.aiCategory)
 
 setTimeout(()=>{
 setAlertPopup(null)
@@ -176,6 +176,58 @@ setViewImage(selectedReport.imageUrl)
 }
 
 },[selectedReport,settings])
+
+useEffect(()=>{
+
+if(!settings.enableAlerts) return
+
+const interval = setInterval(()=>{
+
+const now = Date.now()
+
+reports.forEach((r)=>{
+
+if(!r.createdAt) return
+
+const created = r.createdAt?.seconds
+? r.createdAt.seconds * 1000
+: new Date(r.createdAt).getTime()
+
+const diffMinutes = (now - created) / 1000 / 60
+
+// ⚠️ WARNING (10 mins)
+if(diffMinutes >= 10 && diffMinutes < 20 && !alertedReports[r.id]){
+
+playAlertSound("warning", r.aiCategory)
+
+alert(`⚠️ WARNING!\n${r.aiCategory}\nLagpas 10 minutes na`)
+
+setAlertedReports(prev=>({
+...prev,
+[r.id]: "warning"
+}))
+}
+
+// 🚨 CRITICAL (20 mins)
+if(diffMinutes >= 20 && alertedReports[r.id] !== "critical"){
+
+playAlertSound("critical", r.aiCategory)
+
+alert(`🚨 CRITICAL!\n${r.aiCategory}\nLagpas 20 minutes na!`)
+
+setAlertedReports(prev=>({
+...prev,
+[r.id]: "critical"
+}))
+}
+
+})
+
+},10000)
+
+return ()=>clearInterval(interval)
+
+},[reports, settings, alertedReports])
 
 /* MARK AS READ */
 
