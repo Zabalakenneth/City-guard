@@ -1,712 +1,715 @@
-import { useEffect, useState, useRef } from "react"
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
-import L from "leaflet"
+    import { useEffect, useState, useRef } from "react"
+    import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
+    import L from "leaflet"
 
-import { db } from "../firebase"
-import { collection, onSnapshot, deleteDoc, doc, getDoc, updateDoc } from "firebase/firestore"
+    import { db } from "../firebase"
+    import { collection, onSnapshot, deleteDoc, doc, getDoc, updateDoc } from "firebase/firestore"
 
-import { getAuth, signOut } from "firebase/auth"
-import { useNavigate } from "react-router-dom"
+    import { getAuth, signOut } from "firebase/auth"
+    import { useNavigate } from "react-router-dom"
 
-import markerShadow from "leaflet/dist/images/marker-shadow.png"
+    import markerShadow from "leaflet/dist/images/marker-shadow.png"
 
-const getMarkerIcon = (category) => {
+    const getMarkerIcon = (category) => {
 
-let color = "blue"
+    let color = "blue"
 
-if(category === "Fire") color = "red"
-if(category === "Medical Emergency") color = "green"
-if(category === "Flood") color = "blue"
-if(category === "Crime") color = "black"
-if(category === "Accident") color = "orange"
+    if(category === "Fire") color = "red"
+    if(category === "Medical Emergency") color = "green"
+    if(category === "Flood") color = "blue"
+    if(category === "Crime") color = "black"
+    if(category === "Accident") color = "orange"
 
-return new L.Icon({
-iconUrl:`https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-${color}.png`,
-shadowUrl: markerShadow,
-iconSize:[25,41],
-iconAnchor:[12,41]
-})
+    return new L.Icon({
+    iconUrl:`https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-${color}.png`,
+    shadowUrl: markerShadow,
+    iconSize:[25,41],
+    iconAnchor:[12,41]
+    })
 
-}
+    }
 
-function MapController({selectedReport, autoZoom}){
+    function MapController({selectedReport, autoZoom}){
 
-const map = useMap()
+    const map = useMap()
 
-useEffect(()=>{
+    useEffect(()=>{
 
-if(!autoZoom) return
-if(!selectedReport || !selectedReport.location) return
+    if(!autoZoom) return
+    if(!selectedReport || !selectedReport.location) return
 
-const lat = Number(selectedReport.location.latitude)
-const lng = Number(selectedReport.location.longitude)
+    const lat = Number(selectedReport.location.latitude)
+    const lng = Number(selectedReport.location.longitude)
 
-if(isNaN(lat) || isNaN(lng)) return
+    if(isNaN(lat) || isNaN(lng)) return
 
-map.setView([lat,lng],16)
+    map.setView([lat,lng],16)
 
-},[selectedReport,map,autoZoom])
+    },[selectedReport,map,autoZoom])
 
-return null
+    return null
 
-}
+    }
 
-function Dashboard(){
+    function Dashboard(){
 
-const auth = getAuth()
-const navigate = useNavigate()
+    const auth = getAuth()
+    const navigate = useNavigate()
 
-const [reports,setReports] = useState([])
-const [notifList,setNotifList] = useState([])
-const [selectedReport,setSelectedReport] = useState(null)
+    const [reports,setReports] = useState([])
+    const [notifList,setNotifList] = useState([])
+    const [selectedReport,setSelectedReport] = useState(null)
 
-const [showNotif,setShowNotif] = useState(false)
+    // 🔊 SOUND QUEUE SYSTEM
+    const [soundQueue, setSoundQueue] = useState([])
+    const isPlayingRef = useRef(false) 
 
-const [activeFilter,setActiveFilter] = useState("All")
+    const [showNotif,setShowNotif] = useState(false)
 
-const [viewImage,setViewImage] = useState(null)
+    const [activeFilter,setActiveFilter] = useState("All")
 
-const [alertPopup,setAlertPopup] = useState(null)
+    const [viewImage,setViewImage] = useState(null)
 
-const [settings,setSettings] = useState({
-aiDetection:true,
-autoZoom:true,
-showImages:true,
-enableAlerts:true
-})
-const [alertedReports,setAlertedReports] = useState({})
-const popupRefs = useRef({})
+    const [alertPopup,setAlertPopup] = useState(null)
 
-/* SMART EMERGENCY ALERT SOUNDS */
+    const [settings,setSettings] = useState({
+    aiDetection:true,
+    autoZoom:true,
+    showImages:true,
+    enableAlerts:true
+    })
+    const [alertedReports,setAlertedReports] = useState({})
+    const popupRefs = useRef({})
 
-const audioRef = useRef(null)
+    /* SMART EMERGENCY ALERT SOUNDS */
 
-const playAlertSound = (type, category) => {
+    const audioRef = useRef(null)
 
-let sound = "/siren.mp3"
+    const enqueueSound = (type, category) => {
+    setSoundQueue(prev => [...prev, { type, category }])
+    }
 
-// 🎯 PRIORITY: WARNING / CRITICAL
-if(type === "warning") sound = "/warning.mp3"
-if(type === "critical") sound = "/critical.mp3"
+    // 🎯 PRIORITY: WARNING / CRITICAL
+    useEffect(() => {
 
-// fallback: category sounds (for new incidents)
-if(!type){
-if(category === "Fire") sound = "/fire.mp3"
-if(category === "Medical Emergency") sound = "/ambulance.mp3"
-if(category === "Crime") sound = "/police.mp3"
-if(category === "Accident") sound = "/accident.mp3"
-if(category === "Flood") sound = "/flood.mp3"
-}
+  if (isPlayingRef.current) return
+  if (soundQueue.length === 0) return
 
-// 🛑 stop previous sound
-if(audioRef.current){
-audioRef.current.pause()
-audioRef.current.currentTime = 0
-}
+  const { type, category } = soundQueue[0]
 
-// 🔊 play new sound
-const audio = new Audio(sound)
+  let sound = "/siren.mp3"
 
-// 🚨 loop pag critical
-if(type === "critical"){
-audio.loop = true
-}
+  if (type === "warning") sound = "/warning.mp3"
+  if (type === "critical") sound = "/critical.mp3"
 
-audio.volume = 1
-audio.play().catch(()=>{})
+  if (!type) {
+    if (category === "Fire") sound = "/fire.mp3"
+    if (category === "Medical Emergency") sound = "/ambulance.mp3"
+    if (category === "Crime") sound = "/police.mp3"
+    if (category === "Accident") sound = "/accident.mp3"
+    if (category === "Flood") sound = "/flood.mp3"
+  }
 
-audioRef.current = audio
-}
+  isPlayingRef.current = true
 
-/* REALTIME REPORT LISTENER */
+  const audio = new Audio(sound)
 
-useEffect(()=>{
+  audio.onended = () => {
+    isPlayingRef.current = false
+    setSoundQueue(prev => prev.slice(1))
+  }
 
-const unsub = onSnapshot(collection(db,"reports"),(snapshot)=>{
+  audio.play().catch(()=>{})
 
-let data = snapshot.docs.map(doc=>({
-id:doc.id,
-...doc.data()
-}))
+  audioRef.current = audio
 
-if(!settings.aiDetection){
-data = []
-}
+}, [soundQueue])
 
-setReports(data)
-setNotifList(data.filter(r => !r.read))
+    /* REALTIME REPORT LISTENER */
 
-const newReports = snapshot.docChanges().filter(
-change => change.type === "added"
-)
+    useEffect(()=>{
 
-if(newReports.length > 0){
+    const unsub = onSnapshot(collection(db,"reports"),(snapshot)=>{
 
-const newReport = newReports[0].doc.data()
+    let data = snapshot.docs.map(doc=>({
+    id:doc.id,
+    ...doc.data()
+    }))
 
-if(settings.enableAlerts){
+    if(!settings.aiDetection){
+    data = []
+    }
 
-setAlertPopup(newReport)
-playAlertSound(null, newReport.aiCategory)
+    setReports(data)
+    setNotifList(data.filter(r => !r.read))
 
-setTimeout(()=>{
-setAlertPopup(null)
-},6000)
+    const newReports = snapshot.docChanges().filter(
+    change => change.type === "added"
+    )
 
-}
+    if(newReports.length > 0){
 
-}
+    const newReport = newReports[0].doc.data()
 
-})
+    if(settings.enableAlerts){
 
-return ()=>unsub()
+    setAlertPopup(newReport)
+    enqueueSound(null, newReport.aiCategory)
 
-},[settings])
+    setTimeout(()=>{
+    setAlertPopup(null)
+    },6000)
 
-/* POPUP + IMAGE */
+    }
 
-useEffect(()=>{
+    }
 
-if(selectedReport && popupRefs.current[selectedReport.id]){
-popupRefs.current[selectedReport.id].openPopup()
-}
+    })
 
-if(settings.showImages && selectedReport?.imageUrl){
-setViewImage(selectedReport.imageUrl)
-}
+    return ()=>unsub()
 
-},[selectedReport,settings])
+    },[settings])
 
-useEffect(()=>{
+    /* POPUP + IMAGE */
 
-if(!settings.enableAlerts) return
+    useEffect(()=>{
 
-const interval = setInterval(()=>{
+    if(selectedReport && popupRefs.current[selectedReport.id]){
+    popupRefs.current[selectedReport.id].openPopup()
+    }
 
-const now = Date.now()
+    if(settings.showImages && selectedReport?.imageUrl){
+    setViewImage(selectedReport.imageUrl)
+    }
 
-reports.forEach((r)=>{
+    },[selectedReport,settings])
 
-if(!r.createdAt) return
+    useEffect(()=>{
 
-const created = r.createdAt?.seconds
-? r.createdAt.seconds * 1000
-: new Date(r.createdAt).getTime()
+    if(!settings.enableAlerts) return
 
-const diffMinutes = (now - created) / 1000 / 60
+    const interval = setInterval(()=>{
 
-// ⚠️ WARNING (10 mins)
-if(diffMinutes >= 10 && diffMinutes < 20 && !alertedReports[r.id]){
+    const now = Date.now()
 
-playAlertSound("warning", r.aiCategory)
+    reports.forEach((r)=>{
 
-alert(`⚠️ WARNING!\n${r.aiCategory}\nLagpas 10 minutes na`)
+    if(!r.createdAt) return
 
-setAlertedReports(prev=>({
-...prev,
-[r.id]: "warning"
-}))
-}
+    const created = r.createdAt?.seconds
+    ? r.createdAt.seconds * 1000
+    : new Date(r.createdAt).getTime()
 
-// 🚨 CRITICAL (20 mins)
-if(diffMinutes >= 20 && alertedReports[r.id] !== "critical"){
+    const diffMinutes = (now - created) / 1000 / 60
 
-playAlertSound("critical", r.aiCategory)
+    // ⚠️ WARNING (10 mins)
+    if(diffMinutes >= 10 && diffMinutes < 20 && !alertedReports[r.id]){
 
-alert(`🚨 CRITICAL!\n${r.aiCategory}\nLagpas 20 minutes na!`)
+    enqueueSound("warning", r.aiCategory)
 
-setAlertedReports(prev=>({
-...prev,
-[r.id]: "critical"
-}))
-}
+    alert(`⚠️ WARNING!\n${r.aiCategory}\nLagpas 10 minutes na`)
 
-})
+    setAlertedReports(prev=>({
+    ...prev,
+    [r.id]: "warning"
+    }))
+    }
 
-},10000)
+    // 🚨 CRITICAL (20 mins)
+    if(diffMinutes >= 20 && alertedReports[r.id] !== "critical"){
 
-return ()=>clearInterval(interval)
+    enqueueSound("critical", r.aiCategory)
 
-},[reports, settings, alertedReports])
+    alert(`🚨 CRITICAL!\n${r.aiCategory}\nLagpas 20 minutes na!`)
 
-/* MARK AS READ */
+    setAlertedReports(prev=>({
+    ...prev,
+    [r.id]: "critical"
+    }))
+    }
 
-const markAsRead = async(id)=>{
+    })
 
-try{
+    },10000)
 
-await updateDoc(doc(db,"reports",id),{
-read:true
-})
+    return ()=>clearInterval(interval)
 
-}catch(err){
-console.log(err)
-}
+    },[reports, settings, alertedReports])
 
-}
+    /* MARK AS READ */
 
-/* LOGOUT */
+    const markAsRead = async(id)=>{
 
-const handleLogout = async ()=>{
+    try{
 
-try{
-await signOut(auth)
-navigate("/")
-}catch(err){
-console.log(err)
-}
+    await updateDoc(doc(db,"reports",id),{
+    read:true
+    })
 
-}
+    }catch(err){
+    console.log(err)
+    }
 
-/* RESOLVE INCIDENT */
+    }
 
-const resolveIncident = async (id)=>{
+    /* LOGOUT */
 
-try{
-await deleteDoc(doc(db,"reports",id))
-alert("Incident resolved")
-}catch(err){
-console.log(err)
-}
+    const handleLogout = async ()=>{
 
-}
+    try{
+    await signOut(auth)
+    navigate("/")
+    }catch(err){
+    console.log(err)
+    }
 
-/* OPEN REPORT */
+    }
 
-const openReport = (r)=>{
+    /* RESOLVE INCIDENT */
 
-setSelectedReport(r)
-setShowNotif(false)
+    const resolveIncident = async (id)=>{
 
-if(!r.read){
-markAsRead(r.id)
-}
+    try{
 
-}
+    // 🛑 STOP SOUND
+    if(audioRef.current){
+    audioRef.current.pause()
+    audioRef.current.currentTime = 0
+    }
 
-/* COUNTERS */
+    await deleteDoc(doc(db,"reports",id))
 
-const unread = reports.filter(r=>!r.read).length
+    alert("Incident resolved")
 
-const fireCount = reports.filter(r=>r.aiCategory==="Fire").length
-const medicalCount = reports.filter(r=>r.aiCategory==="Medical Emergency").length
-const accidentCount = reports.filter(r=>r.aiCategory==="Accident").length
-const floodCount = reports.filter(r=>r.aiCategory==="Flood").length
-const crimeCount = reports.filter(r=>r.aiCategory==="Crime").length
+    }catch(err){
+    console.log(err)
+    }
 
-return(
+    }
 
-<div style={{height:"100vh",display:"flex",flexDirection:"column"}}>
+    /* COUNTERS */
 
-{alertPopup && (
+    const unread = reports.filter(r=>!r.read).length
 
-<div
-onClick={()=>{
+    const fireCount = reports.filter(r=>r.aiCategory==="Fire").length
+    const medicalCount = reports.filter(r=>r.aiCategory==="Medical Emergency").length
+    const accidentCount = reports.filter(r=>r.aiCategory==="Accident").length
+    const floodCount = reports.filter(r=>r.aiCategory==="Flood").length
+    const crimeCount = reports.filter(r=>r.aiCategory==="Crime").length
 
-setSelectedReport(alertPopup)
+    return(
 
-if(popupRefs.current[alertPopup.id]){
-popupRefs.current[alertPopup.id].openPopup()
-}
+    <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>
 
-}}
-style={{
-position:"fixed",
-top:"20px",
-left:"50%",
-transform:"translateX(-50%)",
-background:"red",
-color:"white",
-padding:"15px 25px",
-borderRadius:"8px",
-fontWeight:"bold",
-zIndex:9999,
-cursor:"pointer"
-}}
->
+    {alertPopup && (
 
-🚨 NEW EMERGENCY ALERT: {alertPopup.aiCategory || "Incident"}  
-<br/>
-<small>Click to view location</small>
+    <div
+    onClick={()=>{
 
-</div>
+    setSelectedReport(alertPopup)
 
-)}
+    if(popupRefs.current[alertPopup.id]){
+    popupRefs.current[alertPopup.id].openPopup()
+    }
 
-<div style={{
-background:"linear-gradient(90deg,#0f2bb8,#1e40ff)",
-color:"white",
-padding:"14px 18px",
-fontSize:"20px",
-fontWeight:"bold",
-display:"flex",
-justifyContent:"space-between",
-alignItems:"center"
-}}>
+    }}
+    style={{
+    position:"fixed",
+    top:"20px",
+    left:"50%",
+    transform:"translateX(-50%)",
+    background:"red",
+    color:"white",
+    padding:"15px 25px",
+    borderRadius:"8px",
+    fontWeight:"bold",
+    zIndex:9999,
+    cursor:"pointer"
+    }}
+    >
 
-<div>CITYGUARD COMMAND CENTER</div>
+    🚨 NEW EMERGENCY ALERT: {alertPopup.aiCategory || "Incident"}  
+    <br/>
+    <small>Click to view location</small>
 
-<div style={{display:"flex",gap:"15px",alignItems:"center",position:"relative"}}>
+    </div>
 
-<div style={{cursor:"pointer"}} onClick={()=>setShowNotif(!showNotif)}>
-🔔
-{unread>0 && (
-<span style={{
-background:"red",
-color:"white",
-borderRadius:"50%",
-padding:"3px 7px",
-fontSize:"12px",
-marginLeft:"5px"
-}}>
-{unread}
-</span>
-)}
-</div>
+    )}
 
-{showNotif && (
+    <div style={{
+    background:"linear-gradient(90deg,#0f2bb8,#1e40ff)",
+    color:"white",
+    padding:"14px 18px",
+    fontSize:"20px",
+    fontWeight:"bold",
+    display:"flex",
+    justifyContent:"space-between",
+    alignItems:"center"
+    }}>
 
-<div style={{
-position:"absolute",
-top:"35px",
-right:"0",
-width:"300px",
-background:"white",
-color:"black",
-borderRadius:"6px",
-boxShadow:"0 4px 10px rgba(0,0,0,0.2)",
-zIndex:999
-}}>
+    <div>CITYGUARD COMMAND CENTER</div>
 
-<div
-style={{
-display:"flex",
-justifyContent:"space-between",
-alignItems:"center",
-padding:"10px",
-fontWeight:"bold",
-borderBottom:"1px solid #eee"
-}}
->
+    <div style={{display:"flex",gap:"15px",alignItems:"center",position:"relative"}}>
 
-<span>Notifications</span>
+    <div style={{cursor:"pointer"}} onClick={()=>setShowNotif(!showNotif)}>
+    🔔
+    {unread>0 && (
+    <span style={{
+    background:"red",
+    color:"white",
+    borderRadius:"50%",
+    padding:"3px 7px",
+    fontSize:"12px",
+    marginLeft:"5px"
+    }}>
+    {unread}
+    </span>
+    )}
+    </div>
 
-<button
-onClick={()=>{
+    {showNotif && (
 
-setNotifList([])
+    <div style={{
+    position:"absolute",
+    top:"35px",
+    right:"0",
+    width:"300px",
+    background:"white",
+    color:"black",
+    borderRadius:"6px",
+    boxShadow:"0 4px 10px rgba(0,0,0,0.2)",
+    zIndex:999
+    }}>
 
-}}
-style={{
-background:"#ff4d4d",
-color:"white",
-border:"none",
-padding:"4px 10px",
-borderRadius:"6px",
-cursor:"pointer",
-fontSize:"12px"
-}}
->
+    <div
+    style={{
+    display:"flex",
+    justifyContent:"space-between",
+    alignItems:"center",
+    padding:"10px",
+    fontWeight:"bold",
+    borderBottom:"1px solid #eee"
+    }}
+    >
 
-Clear
+    <span>Notifications</span>
 
-</button>
+    <button
+    onClick={()=>{
 
-</div>
+    setNotifList([])
 
-{reports.length===0 && (
-<p style={{padding:"10px"}}>No alerts</p>
-)}
+    }}
+    style={{
+    background:"#ff4d4d",
+    color:"white",
+    border:"none",
+    padding:"4px 10px",
+    borderRadius:"6px",
+    cursor:"pointer",
+    fontSize:"12px"
+    }}
+    >
 
-{notifList.slice().reverse().slice(0,5).map((r)=>(
+    Clear
 
-<div
-key={r.id}
-onClick={()=>openReport(r)}
-style={{
-padding:"10px",
-borderBottom:"1px solid #eee",
-cursor:"pointer",
-background:r.read ? "white" : "#e6f0ff"
-}}
->
+    </button>
 
-<b>{r.aiCategory || "Emergency"}</b>
+    </div>
 
-<br/>
+    {reports.length===0 && (
+    <p style={{padding:"10px"}}>No alerts</p>
+    )}
 
-<small>{r.description}</small>
+    {notifList.slice().reverse().slice(0,5).map((r)=>(
 
-{!r.read && (
-<span style={{
-color:"red",
-fontSize:"12px"
-}}>
- ● new
-</span>
-)}
+    <div
+    key={r.id}
+    onClick={()=>openReport(r)}
+    style={{
+    padding:"10px",
+    borderBottom:"1px solid #eee",
+    cursor:"pointer",
+    background:r.read ? "white" : "#e6f0ff"
+    }}
+    >
 
-</div>
+    <b>{r.aiCategory || "Emergency"}</b>
 
-))}
+    <br/>
 
-</div>
+    <small>{r.description}</small>
 
-)}
+    {!r.read && (
+    <span style={{
+    color:"red",
+    fontSize:"12px"
+    }}>
+    ● new
+    </span>
+    )}
 
-<button
-onClick={()=>navigate("/profile")}
-style={{
-padding:"6px 12px",
-border:"none",
-background:"#374151",
-color:"white",
-borderRadius:"5px",
-cursor:"pointer"
-}}
->
+    </div>
 
-Admin Profile
+    ))}
 
-</button>
+    </div>
 
-<button
-onClick={handleLogout}
-style={{
-padding:"6px 12px",
-border:"none",
-background:"red",
-color:"white",
-borderRadius:"5px",
-cursor:"pointer"
-}}
->
+    )}
 
-Logout
+    <button
+    onClick={()=>navigate("/profile")}
+    style={{
+    padding:"6px 12px",
+    border:"none",
+    background:"#374151",
+    color:"white",
+    borderRadius:"5px",
+    cursor:"pointer"
+    }}
+    >
 
-</button>
+    Admin Profile
 
-</div>
+    </button>
 
-</div>
+    <button
+    onClick={handleLogout}
+    style={{
+    padding:"6px 12px",
+    border:"none",
+    background:"red",
+    color:"white",
+    borderRadius:"5px",
+    cursor:"pointer"
+    }}
+    >
 
-<div style={{
-display:"flex",
-gap:"20px",
-padding:"10px",
-background:"#0f172a",
-color:"white"
-}}>
+    Logout
 
-<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Fire")}>🔥 Fire: {fireCount}</div>
-<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Medical Emergency")}>🚑 Medical: {medicalCount}</div>
-<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Accident")}>🚗 Accident: {accidentCount}</div>
-<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Flood")}>🌊 Flood: {floodCount}</div>
-<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Crime")}>🚓 Crime: {crimeCount}</div>
-<div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("All")}>📋 All</div>
+    </button>
 
-</div>
+    </div>
 
-<div style={{flex:1,display:"flex",overflow:"hidden"}}>
+    </div>
 
-<div style={{
-width:"300px",
-background:"#f4f4f4",
-height:"100%",
-overflowY:"auto",
-padding:"10px"
-}}>
+    <div style={{
+    display:"flex",
+    gap:"20px",
+    padding:"10px",
+    background:"#0f172a",
+    color:"white"
+    }}>
 
-<h3>Incidents</h3>
+    <div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Fire")}>🔥 Fire: {fireCount}</div>
+    <div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Medical Emergency")}>🚑 Medical: {medicalCount}</div>
+    <div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Accident")}>🚗 Accident: {accidentCount}</div>
+    <div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Flood")}>🌊 Flood: {floodCount}</div>
+    <div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("Crime")}>🚓 Crime: {crimeCount}</div>
+    <div style={{cursor:"pointer"}} onClick={()=>setActiveFilter("All")}>📋 All</div>
 
-{reports
-.filter(r=>activeFilter==="All" || r.aiCategory===activeFilter)
-.map((r)=>(
+    </div>
 
-<div
-key={r.id}
-onClick={()=>setSelectedReport(r)}
-style={{
-background:"white",
-padding:"10px",
-marginBottom:"10px",
-borderRadius:"6px",
-boxShadow:"0 2px 4px rgba(0,0,0,0.1)",
-cursor:"pointer"
-}}
->
+    <div style={{flex:1,display:"flex",overflow:"hidden"}}>
 
-<b>{r.aiCategory || "Emergency"}</b>
+    <div style={{
+    width:"300px",
+    background:"#f4f4f4",
+    height:"100%",
+    overflowY:"auto",
+    padding:"10px"
+    }}>
 
-<br/>
+    <h3>Incidents</h3>
 
-<small>{r.description}</small>
+    {reports
+    .filter(r=>activeFilter==="All" || r.aiCategory===activeFilter)
+    .map((r)=>(
 
-<br/><br/>
+    <div
+    key={r.id}
+    onClick={()=>setSelectedReport(r)}
+    style={{
+    background:"white",
+    padding:"10px",
+    marginBottom:"10px",
+    borderRadius:"6px",
+    boxShadow:"0 2px 4px rgba(0,0,0,0.1)",
+    cursor:"pointer"
+    }}
+    >
 
-<button
-onClick={(e)=>{
-e.stopPropagation()
-resolveIncident(r.id)
-}}
-style={{
-background:"green",
-color:"white",
-border:"none",
-padding:"5px 10px",
-borderRadius:"4px",
-cursor:"pointer"
-}}
->
+    <b>{r.aiCategory || "Emergency"}</b>
 
-Resolve
+    <br/>
 
-</button>
+    <small>{r.description}</small>
 
-</div>
+    <br/><br/>
 
-))}
+    <button
+    onClick={(e)=>{
+    e.stopPropagation()
+    resolveIncident(r.id)
+    }}
+    style={{
+    background:"green",
+    color:"white",
+    border:"none",
+    padding:"5px 10px",
+    borderRadius:"4px",
+    cursor:"pointer"
+    }}
+    >
 
-</div>
+    Resolve
 
-<div style={{flex:1}}>
+    </button>
 
-<MapContainer center={[16.0430,120.3333]} zoom={13} style={{height:"100%",width:"100%"}}>
+    </div>
 
-<MapController selectedReport={selectedReport} autoZoom={settings.autoZoom}/>
+    ))}
 
-<TileLayer
-attribution="© OpenStreetMap"
-url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-/>
+    </div>
 
-{reports.map((report)=>{
+    <div style={{flex:1}}>
 
-if(!report.location) return null
+    <MapContainer center={[16.0430,120.3333]} zoom={13} style={{height:"100%",width:"100%"}}>
 
-const lat = Number(report.location.latitude)
-const lng = Number(report.location.longitude)
+    <MapController selectedReport={selectedReport} autoZoom={settings.autoZoom}/>
 
-if(isNaN(lat)||isNaN(lng)) return null
+    <TileLayer
+    attribution="© OpenStreetMap"
+    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+    />
 
-return(
+    {reports.map((report)=>{
 
-<Marker
-key={report.id}
-position={[lat,lng]}
-icon={getMarkerIcon(report.aiCategory)}
-ref={(ref)=>{
-if(ref) popupRefs.current[report.id] = ref
-}}
->
+    if(!report.location) return null
 
-<Popup>
+    const lat = Number(report.location.latitude)
+    const lng = Number(report.location.longitude)
 
-<div style={{width:"200px"}}>
+    if(isNaN(lat)||isNaN(lng)) return null
 
-<b>{report.aiCategory}</b>
+    return(
 
-<br/><br/>
+    <Marker
+    key={report.id}
+    position={[lat,lng]}
+    icon={getMarkerIcon(report.aiCategory)}
+    ref={(ref)=>{
+    if(ref) popupRefs.current[report.id] = ref
+    }}
+    >
 
-{report.description}
+    <Popup>
 
-<br/><br/>
+    <div style={{width:"200px"}}>
 
-{report.imageUrl && (
+    <b>{report.aiCategory}</b>
 
-<img
-src={report.imageUrl}
-alt="report"
-onClick={()=>setViewImage(report.imageUrl)}
-style={{width:"100%",borderRadius:"6px",cursor:"pointer"}}
-/>
+    <br/><br/>
 
-)}
+    {report.description}
 
-<br/><br/>
+    <br/><br/>
 
-<button
-onClick={()=>resolveIncident(report.id)}
-style={{
-background:"green",
-color:"white",
-border:"none",
-padding:"6px 12px",
-borderRadius:"4px",
-cursor:"pointer"
-}}
->
+    {report.imageUrl && (
 
-Resolve Incident
+    <img
+    src={report.imageUrl}
+    alt="report"
+    onClick={()=>setViewImage(report.imageUrl)}
+    style={{width:"100%",borderRadius:"6px",cursor:"pointer"}}
+    />
 
-</button>
+    )}
 
-</div>
+    <br/><br/>
 
-</Popup>
+    <button
+    onClick={()=>resolveIncident(report.id)}
+    style={{
+    background:"green",
+    color:"white",
+    border:"none",
+    padding:"6px 12px",
+    borderRadius:"4px",
+    cursor:"pointer"
+    }}
+    >
 
-</Marker>
+    Resolve Incident
 
-)
+    </button>
 
-})}
+    </div>
 
-</MapContainer>
+    </Popup>
 
-</div>
+    </Marker>
 
-</div>
+    )
 
-{viewImage && (
+    })}
 
-<div style={{
-position:"fixed",
-top:0,
-left:0,
-width:"100%",
-height:"100%",
-background:"rgba(0,0,0,0.9)",
-display:"flex",
-justifyContent:"center",
-alignItems:"center",
-zIndex:9999
-}}>
+    </MapContainer>
 
-<button
-onClick={()=>setViewImage(null)}
-style={{
-position:"absolute",
-top:"20px",
-right:"30px",
-fontSize:"30px",
-background:"none",
-border:"none",
-color:"white",
-cursor:"pointer"
-}}
->
+    </div>
 
-✖
+    </div>
 
-</button>
+    {viewImage && (
 
-<img
-src={viewImage}
-style={{
-maxWidth:"90%",
-maxHeight:"90%",
-borderRadius:"10px"
-}}
-/>
+    <div style={{
+    position:"fixed",
+    top:0,
+    left:0,
+    width:"100%",
+    height:"100%",
+    background:"rgba(0,0,0,0.9)",
+    display:"flex",
+    justifyContent:"center",
+    alignItems:"center",
+    zIndex:9999
+    }}>
 
-</div>
+    <button
+    onClick={()=>setViewImage(null)}
+    style={{
+    position:"absolute",
+    top:"20px",
+    right:"30px",
+    fontSize:"30px",
+    background:"none",
+    border:"none",
+    color:"white",
+    cursor:"pointer"
+    }}
+    >
 
-)}
+    ✖
 
-</div>
+    </button>
 
-)
+    <img
+    src={viewImage}
+    style={{
+    maxWidth:"90%",
+    maxHeight:"90%",
+    borderRadius:"10px"
+    }}
+    />
 
-}
+    </div>
 
-export default Dashboard
+    )}
+
+    </div>
+
+    )
+
+    }
+
+    export default Dashboard
