@@ -57,6 +57,15 @@
     const navigate = useNavigate()
 
     const [reports,setReports] = useState([])
+    const [tick, setTick] = useState(0)
+
+    useEffect(() => {
+      const interval = setInterval(() => {
+        setTick(t => t + 1)
+      }, 1000)
+
+      return () => clearInterval(interval)
+    }, [])
     const [notifList,setNotifList] = useState([])
     const [selectedReport,setSelectedReport] = useState(null)
 
@@ -119,9 +128,14 @@
     setSoundQueue(prev => prev.slice(1))
   }
 
-  audio.play().catch(()=>{})
+  audio.play()
+  .then(() => {})
+  .catch(() => {
+    isPlayingRef.current = false
+    setSoundQueue(prev => prev.slice(1))
+  })
 
-  audioRef.current = audio
+audioRef.current = audio
 
 }, [soundQueue])
 
@@ -297,6 +311,27 @@
     const floodCount = reports.filter(r=>r.aiCategory==="Flood").length
     const crimeCount = reports.filter(r=>r.aiCategory==="Crime").length
 
+    const formatTime = (timestamp) => {
+      if (!timestamp) return "No time";
+
+      let created;
+
+      if (typeof timestamp === "string") {
+        created = Date.parse(timestamp);
+      } else if (timestamp.seconds) {
+        created = timestamp.seconds * 1000;
+      } else {
+        created = new Date(timestamp).getTime();
+      }
+
+      const diff = Math.floor((Date.now() - created) / 1000);
+
+      if (diff < 60) return "Just now";
+      if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
+      return `${Math.floor(diff / 86400)} day ago`;
+    };
+
     return(
 
     <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>
@@ -436,6 +471,7 @@
 
     <b>{r.aiCategory || "Emergency"}</b>
 
+    <small>⏱️ {formatTime(r.createdAt)}</small>
     <br/>
 
     <small>{r.description}</small>
@@ -540,10 +576,17 @@
     >
 
     <b>{r.aiCategory || "Emergency"}</b>
+    
 
     <br/>
 
-    <small>{r.description}</small>
+    <div style={{ color:"#666", fontSize:"12px", marginTop:"4px" }}>
+  ⏱️ {formatTime(r.createdAt)}
+</div>
+
+<div style={{ marginTop:"6px", fontSize:"13px" }}>
+  {r.description}
+</div>
 
     <br/><br/>
 
