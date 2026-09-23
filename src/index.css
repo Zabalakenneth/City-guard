@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* FULL PAGE HEIGHT */
+html, body, #root{
+height:100%;
+margin:0;
+}
+
+/* GLOBAL BACKGROUND */
+body{
+background:#f4f6fb;
+}
+
+/* Leaflet map */
+.leaflet-container{
+height:100%;
+width:100%;
+}
