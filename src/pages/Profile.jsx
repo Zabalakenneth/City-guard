@@ -34,6 +34,16 @@ function patchSharedState(patch) {
   }
 }
 
+// Converts a Firestore Timestamp, string, Date or millisecond number into milliseconds.
+function toMs(value) {
+  if (!value) return 0
+  if (typeof value === "number") return value
+  if (typeof value.seconds === "number") return value.seconds * 1000
+  if (typeof value.toDate === "function") return value.toDate().getTime()
+  const t = new Date(value).getTime()
+  return isNaN(t) ? 0 : t
+}
+
 function Profile(){
 
 const auth = getAuth()
@@ -113,9 +123,16 @@ const resolveIncident = async (id)=>{
 if(!window.confirm("Mark this as resolved?")) return
 
 try{
+// Freeze the elapsed time from this report's own start, same formula as the dashboard.
+const target = reports.find((x) => x.id === id)
+const resolvedAt = new Date()
+const startMs = target ? toMs(target.createdAt) : 0
+const responseSeconds = startMs ? Math.max(0, Math.floor((resolvedAt.getTime() - startMs) / 1000)) : null
+
 await updateDoc(doc(db,"reports",id),{
 status: "resolved",
-resolvedAt: new Date(),
+resolvedAt,
+responseSeconds,
 resolvedBy: auth.currentUser?.email || "admin",
 autoResolved: false
 })
@@ -147,27 +164,21 @@ const accidentCount = reports.filter(r=>reportType(r)==="Accident").length
 const floodCount = reports.filter(r=>reportType(r)==="Flood").length
 const crimeCount = reports.filter(r=>reportType(r)==="Crime").length
 
-// Format response time as "Resolved within X minutes Y seconds"
-  const formatResponseTime = (createdAt, resolvedAt) => {
-  if (!createdAt || !resolvedAt) return "—"
-
-  const start = createdAt?.seconds
-    ? createdAt.seconds * 1000
-    : new Date(createdAt).getTime()
-
-  const end = resolvedAt?.seconds
-    ? resolvedAt.seconds * 1000
-    : new Date(resolvedAt).getTime()
-
-  const diffSec = Math.max(0, Math.floor((end - start) / 1000))
-
-  const days = Math.floor(diffSec / 86400)
-  const hours = Math.floor((diffSec % 86400) / 3600)
-  const minutes = Math.floor((diffSec % 3600) / 60)
-
-  if (days > 0) return `${days}d ${hours}h`
-  if (hours > 0) return `${hours}h ${minutes}m`
-  return `${minutes}m`
+// Response time uses the frozen value saved when the report was resolved or marked fake.
+const formatResponseTime = (createdAt, endAt, responseSeconds) => {
+  let diffSec
+  if (typeof responseSeconds === "number") {
+    diffSec = responseSeconds
+  } else {
+    // Older rows have no frozen value, so fall back to the two timestamps.
+    const start = toMs(createdAt)
+    const end = toMs(endAt)
+    if (!start || !end) return "—"
+    diffSec = Math.max(0, Math.floor((end - start) / 1000))
+  }
+  const m = Math.floor(diffSec / 60)
+  const s = diffSec % 60
+  return `${m}m ${s}s`
 }
 
 // Robust date formatting (handles Firestore Timestamp, string, Date)
@@ -492,8 +503,8 @@ return bTime - aTime
   padding:"10px",
   whiteSpace:"nowrap"
 }}>
-  {r.status==="resolved"
-    ? formatResponseTime(r.createdAt, r.resolvedAt)
+  {r.status==="resolved" || r.status==="rejected"
+    ? formatResponseTime(r.createdAt, r.resolvedAt || r.rejectedAt, r.responseSeconds)
     : "—"}
 </td>
 </tr>
