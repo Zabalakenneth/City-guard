@@ -425,6 +425,39 @@ const STATUS_SIGNS = {
 // Returns the single sign for a report, or null when it should show none.
 const statusSign = (r) => STATUS_SIGNS[reportStatus(r)] || null
 
+// Video extensions Cloudinary uses. The mobile app stores the video URL in
+// imageUrl whenever the report has no photo, so the extension is the only
+// reliable way to tell a video URL apart from a photo URL.
+const VIDEO_EXT = /\.(mp4|mov|webm|m4v|avi|ogv|quicktime)(\?|$)/i
+
+const asUrl = (v) => (v ? String(v).trim() : "")
+const isVideoUrl = (url) => !!url && VIDEO_EXT.test(url)
+
+// Resolves the photo and the video of a report INDEPENDENTLY.
+//   - videoUrl set            -> that is the video
+//   - imageUrl is a video file -> it is the video URL the mobile app copied over
+//   - imageUrl is anything else -> it is a real photo
+// A report can carry both (a photo was taken, then the AI asked for a video
+// backup and the photo was never dropped), so both are returned separately.
+function evidenceParts(r) {
+  const imageUrl = asUrl(r.imageUrl)
+  const rawVideo = asUrl(r.videoUrl)
+
+  let photoUrl = null
+  let videoUrl = rawVideo || null
+
+  if (imageUrl) {
+    if (isVideoUrl(imageUrl)) {
+      // Never hand a video URL to an <img> tag.
+      if (!videoUrl) videoUrl = imageUrl
+    } else {
+      photoUrl = imageUrl
+    }
+  }
+
+  return { photoUrl, videoUrl }
+}
+
 // ✅ P20 REVISION: AUTO-DETECT the responding department from the incident's
 // ORIGINAL AI category. This replaces the manual dropdown — the department is
 // chosen automatically from the incident details and shown in a read-only box.
@@ -772,8 +805,13 @@ function Dashboard() {
     const unsub = onSnapshot(collection(db, "reports"), (snapshot) => {
       let data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
 
-      // ✅ AI Filtering: reject low-confidence reports automatically
+      // ✅ AI Filtering: reject low-confidence reports automatically.
+      // EXCEPTION: a report the reporter described in their own words is kept.
+      // The mobile app deliberately saves those (manuallyDescribed: true, LOW
+      // severity) when photo and video both scored below the threshold, so the
+      // incident still reaches responders with whatever evidence it has.
       data = data.filter((r) => {
+        if (r.manuallyDescribed === true) return true
         const conf = r.aiConfidence
         if (typeof conf !== "number") return true // legacy
         return conf >= settings.confidenceThreshold
@@ -791,7 +829,10 @@ function Dashboard() {
         const newReport = newReports[0].doc.data()
         const newId = newReports[0].doc.id
         const conf = newReport.aiConfidence
-        const accepted = typeof conf !== "number" || conf >= settings.confidenceThreshold
+        const accepted =
+          newReport.manuallyDescribed === true ||
+          typeof conf !== "number" ||
+          conf >= settings.confidenceThreshold
         // ✅ P17 REVISION: Only alert/sound for reports not already alerted, so
         // navigating back to the dashboard does NOT replay the sound.
         const alreadyAlerted = alertedReportIdsRef.current.has(newId)
@@ -1324,6 +1365,7 @@ function Dashboard() {
                   ⏱️ Elapsed: {formatElapsed(r.createdAt, r.resolvedAt || r.rejectedAt, r.responseSeconds)}
                 </div>
                 <div style={{ marginTop: "6px", fontSize: "13px" }}>{r.description}</div>
+                {/* Evidence is no longer shown in the Incidents list. */}
                 {r.barangay && (
                   <div style={{ marginTop: "4px", fontSize: "11px", color: "#666" }}>
                     📍 Barangay: {r.barangay}
@@ -1441,6 +1483,9 @@ function Dashboard() {
               const isDispatched = reportStatus(report) === "dispatched"
               const sign = statusSign(report)
               const deptResp = deptResponders[report.id]
+              // Each piece of evidence is resolved on its own, so a report with a
+              // photo and a video backup renders both players.
+              const evidence = evidenceParts(report)
               return (
                 <div key={report.id}>
                   {/* ✅ P5 REVISION: Department-themed OTW line from Dagupan to the incident,
@@ -1516,10 +1561,70 @@ function Dashboard() {
                           ⏱️ Elapsed: {formatElapsed(report.createdAt, report.resolvedAt || report.rejectedAt, report.responseSeconds)}
                         </div>
                         <br />
-                        {report.videoUrl && (
-                          <video src={report.videoUrl} controls style={{ width: "100%", borderRadius: "6px" }} />
+                        {/* Evidence lives only here in the popup, never in the Incidents list. */}
+                        {/* Each piece is read on its own, so a report that has a photo AND a */}
+                        {/* video backup shows both instead of only one of them. */}
+                        {evidence.photoUrl && (
+                          <div style={{ marginTop: "4px" }}>
+                            <div style={{ fontSize: "11px", color: "#666", marginBottom: "4px" }}>
+                              Photo evidence
+                            </div>
+                            <a href={evidence.photoUrl} target="_blank" rel="noreferrer">
+                              <img
+                                src={evidence.photoUrl}
+                                alt="Incident evidence"
+                                onError={(e) => {
+                                  // Broken Cloudinary link: hide the broken-image icon and
+                                  // show the note below it instead of a blank frame.
+                                  e.currentTarget.style.display = "none"
+                                  const note = e.currentTarget.closest("a")?.nextElementSibling
+                                  if (note) note.style.display = "block"
+                                }}
+                                style={{
+                                  width: "100%",
+                                  maxHeight: "180px",
+                                  objectFit: "cover",
+                                  borderRadius: "6px",
+                                  border: "1px solid #ddd",
+                                  display: "block",
+                                  cursor: "zoom-in"
+                                }}
+                              />
+                            </a>
+                            <div style={{ display: "none", fontSize: "11px", color: "#c62828" }}>
+                              Photo could not load
+                            </div>
+                          </div>
                         )}
-                        <br /><br />
+                        {/* The video player is built from videoUrl only, or from a video */}
+                        {/* URL that the mobile app stored in imageUrl. */}
+                        {evidence.videoUrl && (
+                          <div style={{ marginTop: evidence.photoUrl ? "8px" : "4px" }}>
+                            <div style={{ fontSize: "11px", color: "#666", marginBottom: "4px" }}>
+                              Video evidence
+                            </div>
+                            <video
+                              src={evidence.videoUrl}
+                              controls
+                              playsInline
+                              preload="metadata"
+                              style={{
+                                width: "100%",
+                                maxHeight: "180px",
+                                borderRadius: "6px",
+                                border: "1px solid #ddd",
+                                display: "block",
+                                background: "#000"
+                              }}
+                            />
+                          </div>
+                        )}
+                        {!evidence.photoUrl && !evidence.videoUrl && (
+                          <div style={{ fontSize: "11px", color: "#999" }}>
+                            No evidence attached
+                          </div>
+                        )}
+                        <br />
                         <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                           {/* Fake is a pending-only action, same rule as the list card. */}
                           {reportStatus(report) === "pending" && (
