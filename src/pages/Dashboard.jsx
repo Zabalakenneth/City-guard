@@ -410,7 +410,27 @@ function formatDate(timestamp) {
 // for legacy records that have no aiCategory) so the category never derives from
 // the assigned department. This keeps the dashboard counts, markers, popups, and
 // the Profile analytics/history on the ORIGINAL incident type.
-const reportType = (r) => r.aiCategory || r.type
+
+const reportType = (r) => r.aiCategory || r.type;
+
+const formatAiConfidence = (report) => {
+  const value =
+    report.aiConfidence ??
+    report.confidence ??
+    report.confidenceScore;
+
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const percent = value <= 1 ? value * 100 : value;
+
+  if (percent < 0 || percent > 100) return null;
+
+  return `${Math.round(percent)}%`;
+};
+
+
 
 // Lowercases the status so a stray capital never breaks the routing.
 const reportStatus = (r) => (r.status ? String(r.status).toLowerCase() : "pending")
@@ -1465,19 +1485,18 @@ function Dashboard() {
   </span>
 
   <select
-    value={deptFilter}
-    onChange={(e) => setDeptFilter(e.target.value)}
-    style={{
-      padding: "4px 8px",
-      borderRadius: "4px",
-      fontSize: "12px"
-    }}
-  >
-    <option value="All">All Departments</option>
-    {departments.map((d) => (
-      <option key={d} value={d}>{d}</option>
-    ))}
-  </select>
+  value={deptFilter}
+  onChange={(e) => setDeptFilter(e.target.value)}
+  style={{
+    color: "#222",
+    backgroundColor: "#fff"
+  }}
+>
+  <option value="All">All Departments</option>
+  {departments.map((d) => (
+    <option key={d} value={d}>{d}</option>
+  ))}
+</select>
 
   <button
     onClick={handlePrintReports}
