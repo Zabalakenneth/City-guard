@@ -517,6 +517,7 @@ function Dashboard() {
 
   const [notifList, setNotifList] = useState([])
   const [selectedReport, setSelectedReport] = useState(null)
+  const [showITDemo, setShowITDemo] = useState(false)
 
   // ✅ FIX (P24 REVISION): the in-flight alert queue is deliberately NOT restored from
   // the shared record. A siren that was still queued when the operator navigated away
@@ -1073,7 +1074,11 @@ function Dashboard() {
   // ✅ P18 REVISION: `resolvedBy` is the DEPARTMENT (the resolver), but the
   // incident's `type`/`aiCategory` are NEVER touched — they stay the ORIGINAL
   // AI-suggested category.
-  const autoResolve = async (id, dept) => {
+const autoResolve = async (id, dept) => {
+  // Auto-resolve disabled temporarily.
+  return
+
+  // Existing code stays below
     // ✅ FIX (P24 REVISION): this incident is resolved, so it no longer owns a drive.
     // Clearing the timeline entry (persisted) means the OTW pin cannot come back to
     // life on the next mount - including after a trip to System Settings or Profile.
@@ -1183,22 +1188,6 @@ function Dashboard() {
   }, [reports, deptRoutes])
 
   // ✅ P5 REVISION: Auto-resolve when a department responder arrives at the incident
-  useEffect(() => {
-    reports.forEach((r) => {
-      if (!r || r.status !== "dispatched" || !r.assignedDepartment) return
-      const resp = deptResponders[r.id]
-      if (!resp || !r.location) return
-      const lat = Number(r.location.latitude)
-      const lng = Number(r.location.longitude)
-      if (isNaN(lat) || isNaN(lng)) return
-      const dist = distanceMeters(resp.lat, resp.lng, lat, lng)
-      const radius = settings.resolveRadiusM || 100
-      if (dist <= radius) {
-        autoResolve(r.id, r.assignedDepartment)
-      }
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deptResponders, reports, settings.resolveRadiusM])
 
   const unread = reports.filter((r) => !r.read).length
 
@@ -1228,18 +1217,36 @@ function Dashboard() {
   }
 
   // ✅ P1 REVISION: Filtering by type, status, department
-  const filteredReports = reports.filter((r) => {
-    const st = reportStatus(r)
-    if (activeFilter !== "All" && reportType(r) !== activeFilter) return false
-    // Strict match, so an unassigned report never shows under Dispatched or Rejected.
-    if (statusFilter !== "All" && st !== statusFilter.toLowerCase()) return false
-    if (deptFilter !== "All" && r.assignedDepartment !== deptFilter) return false
-    return true
-  // Newest report first, oldest last.
-  }).sort((a, b) => reportTimeMs(b.createdAt) - reportTimeMs(a.createdAt))
 
-  const departments = [...new Set(reports.map((r) => r.assignedDepartment).filter(Boolean))]
-  
+const filteredReports = reports.filter((r) => {
+  const st = reportStatus(r)
+
+  if (activeFilter !== "All" && reportType(r) !== activeFilter) {
+    return false
+  }
+
+  if (statusFilter !== "All") {
+    const selectedStatus =
+      statusFilter === "OTW"
+        ? "dispatched"
+        : statusFilter.toLowerCase()
+
+    if (st !== selectedStatus) {
+      return false
+    }
+  }
+
+  if (deptFilter !== "All" && r.assignedDepartment !== deptFilter) {
+    return false
+  }
+
+  return true
+}).sort((a, b) => reportTimeMs(b.createdAt) - reportTimeMs(a.createdAt))
+
+const departments = [
+  ...new Set(reports.map((r) => r.assignedDepartment).filter(Boolean))
+]
+
   // Printable incident reports
   const handlePrintReports = () => {
     const printWindow = window.open("", "_blank", "width=1000,height=700")
@@ -1401,30 +1408,129 @@ function Dashboard() {
             )}
           </div>
 
-          {showNotif && (
-            <div style={{
-              position: "absolute", top: "35px", right: "0", width: "300px",
-              background: "white", color: "black", borderRadius: "6px",
-              boxShadow: "0 4px 10px rgba(0,0,0,0.2)", zIndex: 999
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", fontWeight: "bold", borderBottom: "1px solid #eee" }}>
-                <span>Notifications</span>
-                <button onClick={() => setClearedNotifIds((prev) => new Set([...prev, ...notifList.map((r) => r.id)]))} style={{ background: "#ff4d4d", color: "white", border: "none", padding: "4px 10px", borderRadius: "6px", cursor: "pointer", fontSize: "12px" }}>
-                  Clear
-                </button>
-              </div>
-              {reports.length === 0 && <p style={{ padding: "10px" }}>No alerts</p>}
-              {notifList.filter((r) => !clearedNotifIds.has(r.id)).slice().reverse().slice(0, 5).map((r) => (
-                <div key={r.id} onClick={() => { silenceAlerts(); focusMap(r, "card"); markAsRead(r.id) }} style={{ padding: "10px", borderBottom: "1px solid #eee", cursor: "pointer", background: r.read ? "white" : "#e6f0ff" }}>
-                  <b>{reportType(r) || "Emergency"}</b>
-                  <small>⏱️ {formatTime(r.createdAt)}</small>
-                  <br />
-                  <small>{r.description}</small>
-                  {!r.read && <span style={{ color: "red", fontSize: "12px" }}> ● new</span>}
-                </div>
-              ))}
-            </div>
+         
+{showNotif && (
+  <div
+    style={{
+      position: "absolute",
+      top: "35px",
+      right: "0",
+      width: "300px",
+      background: "white",
+      color: "black",
+      borderRadius: "6px",
+      boxShadow: "0 4px 10px rgba(0,0,0,0.2)",
+      zIndex: 999
+    }}
+  >
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "10px",
+        fontWeight: "bold",
+        borderBottom: "1px solid #eee"
+      }}
+    >
+      <span>Notifications</span>
+
+      <button
+        onClick={() =>
+          setClearedNotifIds(
+            (prev) =>
+              new Set([
+                ...prev,
+                ...notifList.map((r) => r.id)
+              ])
+          )
+        }
+        style={{
+          background: "#ff4d4d",
+          color: "white",
+          border: "none",
+          padding: "4px 10px",
+          borderRadius: "6px",
+          cursor: "pointer",
+          fontSize: "12px"
+        }}
+      >
+        Clear
+      </button>
+    </div>
+
+    {/* DEMO-ONLY IT SUPPORT NOTIFICATION */}
+    <div
+      style={{
+        padding: "10px",
+        borderBottom: "1px solid #eee",
+        background: "#fff7ed"
+      }}
+    >
+      <b style={{ color: "#b45309" }}>
+        🛠️ IT Support Notification
+      </b>
+
+      <p style={{ margin: "6px 0", fontSize: "13px" }}>
+        No Available Rescue Team
+      </p>
+
+      <small>
+        Demo only: No rescue team is currently available.
+        IT Support assistance is required.
+      </small>
+
+      <div
+        style={{
+          fontSize: "11px",
+          color: "#92400e",
+          marginTop: "6px"
+        }}
+      >
+        DEMO — No actual message sent
+      </div>
+    </div>
+
+    {reports.length === 0 && (
+      <p style={{ padding: "10px" }}>No alerts</p>
+    )}
+
+    {notifList
+      .filter((r) => !clearedNotifIds.has(r.id))
+      .slice()
+      .reverse()
+      .slice(0, 5)
+      .map((r) => (
+        <div
+          key={r.id}
+          onClick={() => {
+            silenceAlerts()
+            focusMap(r, "card")
+            markAsRead(r.id)
+          }}
+          style={{
+            padding: "10px",
+            borderBottom: "1px solid #eee",
+            cursor: "pointer",
+            background: r.read ? "white" : "#e6f0ff"
+          }}
+        >
+          <b>{reportType(r) || "Emergency"}</b>
+          <br />
+          <small>⏱️ {formatTime(r.createdAt)}</small>
+          <br />
+          <small>{r.description}</small>
+
+          {!r.read && (
+            <span style={{ color: "red", fontSize: "12px" }}>
+              {" "}● new
+            </span>
           )}
+        </div>
+      ))}
+  </div>
+)}
+
 
           <button onClick={() => navigate("/profile")} style={{ padding: "6px 12px", border: "none", background: "#374151", color: "white", borderRadius: "5px", cursor: "pointer" }}>
             Admin Profile
@@ -1462,7 +1568,7 @@ function Dashboard() {
 >
   <span style={{ fontSize: "13px" }}>Status:</span>
 
-  {["All", "Pending", "Dispatched", "Resolved", "Rejected"].map((s) => (
+{["All", "Pending", "OTW", "Resolved", "Rejected"].map((s) => (
     <button
       key={s}
       onClick={() => setStatusFilter(s)}
