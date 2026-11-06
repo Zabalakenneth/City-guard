@@ -51,25 +51,40 @@ function patchSharedState(patch) {
   }
 }
 
-// ✅ P1 REVISION: Only 5 categories (Others removed)
+// Six categories now, Terrorist added for the capstone 2 revision.
 const CATEGORIES = [
-  "Fire", "Flood", "Medical Emergency", "Accident", "Crime"
+  "Fire", "Flood", "Medical Emergency", "Accident", "Crime", "Terrorist"
 ]
 
-// ✅ P1 REVISION: Department-themed colors (used for markers + OTW lines)
+// Terrorist reports need police and medical units at the same time.
+const TERRORIST_DEPT = "PNP and Medical Emergency Team and Responders"
+
+// Department-themed colors (used for markers + OTW lines)
 const DEPT_COLORS = {
   "BFP": "#e11d48",
   "PNP": "#111827",
   "CDRRMO/MDRRMO": "#2563eb",
-  "Medical Emergency Team and Responders": "#16a34a"
+  "Medical Emergency Team and Responders": "#16a34a",
+  [TERRORIST_DEPT]: "#7c3aed"
 }
 
-// ✅ P5 REVISION: Department responder emoji (shown on the live map while OTW)
+// Department responder emoji (shown on the live map while OTW)
 const DEPT_EMOJI = {
   "BFP": "🚒",
   "PNP": "🚓",
   "CDRRMO/MDRRMO": "🚜",
-  "Medical Emergency Team and Responders": "🚑"
+  "Medical Emergency Team and Responders": "🚑",
+  [TERRORIST_DEPT]: "🚨"
+}
+
+// A combined department is served by more than one unit.
+const DEPT_UNITS = {
+  [TERRORIST_DEPT]: ["PNP", "Medical Emergency Team and Responders"]
+}
+
+// Returns the units that respond for a department.
+function deptUnits(dept) {
+  return DEPT_UNITS[dept] || (dept ? [dept] : [])
 }
 
 // ✅ FIX (P21 REVISION): Icon instances are CACHED, one per category / department.
@@ -90,6 +105,7 @@ const getMarkerIcon = (category) => {
   if (category === "Flood") color = "blue"
   if (category === "Crime") color = "black"
   if (category === "Accident") color = "orange"
+  if (category === "Terrorist") color = "violet"
 
   if (!markerIconCache[color]) {
     markerIconCache[color] = new L.Icon({
@@ -144,9 +160,8 @@ function MapController({ mapFocus }) {
 // ✅ REVISION: Dagupan City test-area center (Region 1 / Pangasinan)
 const DAGUPAN_CENTER = { lat: 16.0430, lng: 120.3333 }
 
-// ✅ P8 REVISION: Each department has its OWN separate starting location, all
-// within Dagupan City only (BFP station, PNP station, CDRRMO/MDRRMO office,
-// Medical/ambulance base — each at a different lat/lng inside Dagupan).
+// Each department has its OWN starting location, all within Dagupan City only.
+// The combined Terrorist department has no base of its own, it uses its units' bases.
 const DEPT_START = {
   "BFP": { lat: 16.0430, lng: 120.3333 },                                  // BFP Dagupan station (city center)
   "PNP": { lat: 16.0452, lng: 120.3312 },                                  // PNP Dagupan station
@@ -299,20 +314,25 @@ function buildDrives(reports, deptRoutes, prevDrives) {
     const lat = Number(r.location.latitude)
     const lng = Number(r.location.longitude)
     if (isNaN(lat) || isNaN(lng)) return
-    const existing = prev[r.id]
-    const fetched = deptRoutes && deptRoutes[r.id]
-    const route = fetched && fetched.length > 1 ? fetched : (existing && existing.route ? existing.route : null)
-    next[r.id] = {
-      anchor: existing && typeof existing.anchor === "number"
-        ? existing.anchor
-        : (r.dispatchedAt && r.dispatchedAt.seconds
-            ? r.dispatchedAt.seconds * 1000
-            : (r.dispatchedAt ? new Date(r.dispatchedAt).getTime() : now)),
-      start: getDeptStart(r.assignedDepartment),
-      dest: { lat, lng },
-      dept: r.assignedDepartment,
-      route
-    }
+    // A combined department sends one responder per unit, so each unit gets its own drive.
+    deptUnits(r.assignedDepartment).forEach((unit) => {
+      const key = `${r.id}:${unit}`
+      const existing = prev[key]
+      const fetched = deptRoutes && deptRoutes[key]
+      const route = fetched && fetched.length > 1 ? fetched : (existing && existing.route ? existing.route : null)
+      next[key] = {
+        anchor: existing && typeof existing.anchor === "number"
+          ? existing.anchor
+          : (r.dispatchedAt && r.dispatchedAt.seconds
+              ? r.dispatchedAt.seconds * 1000
+              : (r.dispatchedAt ? new Date(r.dispatchedAt).getTime() : now)),
+        start: getDeptStart(unit),
+        dest: { lat, lng },
+        dept: unit,
+        reportId: r.id,
+        route
+      }
+    })
   })
   return next
 }
@@ -411,7 +431,36 @@ function formatDate(timestamp) {
 // the assigned department. This keeps the dashboard counts, markers, popups, and
 // the Profile analytics/history on the ORIGINAL incident type.
 
-const reportType = (r) => r.aiCategory || r.type;
+// Mirrors the mobile AI service: an unknown or legacy label is mapped to a known
+// category by keyword, so detection stays consistent on both apps.
+const CATEGORY_KEYWORDS = [
+  ["Fire", ["fire", "burn", "smoke"]],
+  ["Flood", ["flood", "water", "typhoon"]],
+  ["Accident", ["accident", "crash", "collision", "wreck", "vehicle", "traffic"]],
+  ["Crime", ["crime", "rob", "theft", "steal", "assault", "shoot", "stab", "gun", "violence", "fight"]],
+  ["Medical Emergency", ["medical", "ambulance", "heart", "drown", "injur", "wound", "bleed", "unconscious", "faint", "sick"]],
+  ["Terrorist", ["terror", "bomb", "explosive", "hostage", "attack"]]
+]
+
+// Maps an unknown label to a known category, the same way the mobile app does.
+function normalizeCategory(raw) {
+  if (!raw) return raw
+  const value = String(raw).trim()
+  if (CATEGORIES.includes(value)) return value
+  const lower = value.toLowerCase()
+  for (const [category, words] of CATEGORY_KEYWORDS) {
+    if (words.some((w) => lower.includes(w))) return category
+  }
+  return value
+}
+
+const reportType = (r) => {
+  const ai = normalizeCategory(r.aiCategory)
+  const manual = normalizeCategory(r.type)
+  // Terrorist is a manual type the model cannot detect, so an explicit selection wins.
+  if (ai === "Terrorist" || manual === "Terrorist") return "Terrorist"
+  return ai || manual
+};
 
 const formatAiConfidence = (report) => {
   const value =
@@ -495,6 +544,8 @@ const autoDetectDept = (r) => {
   if (cat === "Flood") return "CDRRMO/MDRRMO"
   if (cat === "Medical Emergency") return "Medical Emergency Team and Responders"
   if (cat === "Accident") return "Medical Emergency Team and Responders"
+  // Terrorist goes to the police and the medical team at the same time.
+  if (cat === "Terrorist") return TERRORIST_DEPT
   return "BFP" // default fallback
 }
 
@@ -648,15 +699,17 @@ function Dashboard() {
   // the same when an admin resolves from the Profile screen, which keeps the two
   // screens from disagreeing about which incidents are still being driven to.
   const clearDrive = (id) => {
-    if (!drivesRef.current[id]) return
+    // A report can own several drives, one per responding unit.
+    const prefix = `${id}:`
+    const keys = Object.keys(drivesRef.current).filter((k) => k === id || k.startsWith(prefix))
+    if (keys.length === 0) return
     const next = { ...drivesRef.current }
-    delete next[id]
+    keys.forEach((k) => delete next[k])
     drivesRef.current = next
     setDrives(next)
     setDeptResponders((prev) => {
-      if (!prev[id]) return prev
       const n = { ...prev }
-      delete n[id]
+      keys.forEach((k) => delete n[k])
       return n
     })
     patchSharedState({ drives: next })
@@ -803,6 +856,8 @@ function Dashboard() {
       if (category === "Crime") sound = "/police.mp3"
       if (category === "Accident") sound = "/accident.mp3"
       if (category === "Flood") sound = "/flood.mp3"
+      // Terrorist is a police-led response, so it uses the police sound.
+      if (category === "Terrorist") sound = "/police.mp3"
     }
     isPlayingRef.current = true
     let settled = false
@@ -833,6 +888,8 @@ function Dashboard() {
       // incident still reaches responders with whatever evidence it has.
       data = data.filter((r) => {
         if (r.manuallyDescribed === true) return true
+        // Terrorist is a manual type the model cannot detect, so it is always kept.
+        if (reportType(r) === "Terrorist") return true
         const conf = r.aiConfidence
         if (typeof conf !== "number") return true // legacy
         return conf >= settings.confidenceThreshold
@@ -852,6 +909,7 @@ function Dashboard() {
         const conf = newReport.aiConfidence
         const accepted =
           newReport.manuallyDescribed === true ||
+          reportType(newReport) === "Terrorist" ||
           typeof conf !== "number" ||
           conf >= settings.confidenceThreshold
         // ✅ P17 REVISION: Only alert/sound for reports not already alerted, so
@@ -864,7 +922,7 @@ function Dashboard() {
           alertedReportIdsRef.current.add(newId)
           setAlertedReportIds((prev) => new Set(prev).add(newId))
           setAlertPopup(newReport)
-          enqueueSound(null, newReport.aiCategory)
+          enqueueSound(null, reportType(newReport))
           setTimeout(() => setAlertPopup(null), 6000)
         }
       }
@@ -908,14 +966,14 @@ function Dashboard() {
 
         if (diffMinutes >= s.responseTargetMin && diffMinutes < s.responseCriticalMin && !settled[r.id]) {
           settled[r.id] = "warning"
-          enqueueSound("warning", r.aiCategory)
-          pushTimeAlert("warning", `WARNING: ${r.aiCategory} has passed ${s.responseTargetMin} minutes`)
+          enqueueSound("warning", reportType(r))
+          pushTimeAlert("warning", `WARNING: ${reportType(r)} has passed ${s.responseTargetMin} minutes`)
           setAlertedReports((prev) => ({ ...prev, [r.id]: "warning" }))
         }
         if (diffMinutes >= s.responseCriticalMin && settled[r.id] !== "critical") {
           settled[r.id] = "critical"
-          enqueueSound("critical", r.aiCategory)
-          pushTimeAlert("critical", `CRITICAL: ${r.aiCategory} has passed ${s.responseCriticalMin} minutes`)
+          enqueueSound("critical", reportType(r))
+          pushTimeAlert("critical", `CRITICAL: ${reportType(r)} has passed ${s.responseCriticalMin} minutes`)
           setAlertedReports((prev) => ({ ...prev, [r.id]: "critical" }))
         }
       })
@@ -943,14 +1001,18 @@ function Dashboard() {
   // incident's own marker, "card" -> the driving pin while OTW, else the evidence pin.
   const focusMap = (report, mode) => {
     if (!report) return
-    const otwResp = deptResponders[report.id]
+    // A report can have several OTW pins, so take the first responding unit.
+    const otwKey = Object.keys(deptResponders).find(
+      (k) => k === report.id || k.startsWith(`${report.id}:`)
+    )
+    const otwResp = otwKey ? deptResponders[otwKey] : null
     const wantOtw =
       (mode === "otw" || mode === "card") &&
       report.status === "dispatched" &&
       !!otwResp
     if (wantOtw) {
       setSelectedReport(report)
-      setMapFocus({ id: report.id, mode: "otw", lat: otwResp.lat, lng: otwResp.lng, token: Date.now() })
+      setMapFocus({ id: otwKey, mode: "otw", lat: otwResp.lat, lng: otwResp.lng, token: Date.now() })
       return
     }
     if (!report.location) return
@@ -1018,16 +1080,19 @@ function Dashboard() {
         const lat = Number(dispatchedReport.location.latitude)
         const lng = Number(dispatchedReport.location.longitude)
         if (!isNaN(lat) && !isNaN(lng)) {
-          const seeded = {
-            ...drivesRef.current,
-            [id]: {
+          const seeded = { ...drivesRef.current }
+          // Seed one drive per unit so a combined department sends both responders.
+          deptUnits(dept).forEach((unit) => {
+            const key = `${id}:${unit}`
+            seeded[key] = {
               anchor: Date.now(),
-              start: getDeptStart(dept),
+              start: getDeptStart(unit),
               dest: { lat, lng },
-              dept,
-              route: deptRoutes[id] && deptRoutes[id].length > 1 ? deptRoutes[id] : null
+              dept: unit,
+              reportId: id,
+              route: deptRoutes[key] && deptRoutes[key].length > 1 ? deptRoutes[key] : null
             }
-          }
+          })
           drivesRef.current = seeded
           setDrives(seeded)
           setDeptResponders(tickResponders(seeded, Date.now()))
@@ -1125,21 +1190,28 @@ const autoResolve = async (id, dept) => {
     )
     if (dispatched.length === 0) return
     const fetchRoutes = async () => {
-      const tasks = dispatched.map(async (r) => {
-        const start = getDeptStart(r.assignedDepartment)
+      // One route per responding unit, so a combined department gets a route each.
+      const tasks = []
+      dispatched.forEach((r) => {
         const lat = Number(r.location.latitude)
         const lng = Number(r.location.longitude)
-        if (isNaN(lat) || isNaN(lng)) return null
-        const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${lng},${lat}?overview=full&geometries=geojson`
-        try {
-          const res = await fetch(url)
-          const data = await res.json()
-          if (!data.routes || !data.routes[0] || !data.routes[0].geometry) return null
-          const coords = data.routes[0].geometry.coordinates.map(([lng2, lat2]) => [lat2, lng2])
-          return { id: r.id, coords }
-        } catch (err) {
-          return null
-        }
+        if (isNaN(lat) || isNaN(lng)) return
+        deptUnits(r.assignedDepartment).forEach((unit) => {
+          const start = getDeptStart(unit)
+          const key = `${r.id}:${unit}`
+          tasks.push((async () => {
+            const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${lng},${lat}?overview=full&geometries=geojson`
+            try {
+              const res = await fetch(url)
+              const data = await res.json()
+              if (!data.routes || !data.routes[0] || !data.routes[0].geometry) return null
+              const coords = data.routes[0].geometry.coordinates.map(([lng2, lat2]) => [lat2, lng2])
+              return { id: key, coords }
+            } catch (err) {
+              return null
+            }
+          })())
+        })
       })
       const results = await Promise.all(tasks)
       if (cancelled) return
@@ -1198,6 +1270,7 @@ const autoResolve = async (id, dept) => {
   const accidentCount = reports.filter((r) => reportType(r) === "Accident").length
   const floodCount = reports.filter((r) => reportType(r) === "Flood").length
   const crimeCount = reports.filter((r) => reportType(r) === "Crime").length
+  const terroristCount = reports.filter((r) => reportType(r) === "Terrorist").length
 
   const formatTime = (timestamp) => {
     if (!timestamp) return "No time"
@@ -1551,6 +1624,7 @@ const departments = [
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Accident")}>🚗 Accident: {accidentCount}</div>
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Flood")}>🌊 Flood: {floodCount}</div>
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Crime")}>🚓 Crime: {crimeCount}</div>
+        <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Terrorist")}>🚨 Terrorist: {terroristCount}</div>
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("All")}>📋 All</div>
       </div>
       
@@ -1744,7 +1818,7 @@ const departments = [
             {Object.keys(DEPT_START).map((dept) => {
               const base = DEPT_START[dept]
               const isDispatched = reports.some(
-                (r) => r.status === "dispatched" && r.assignedDepartment === dept
+                (r) => r.status === "dispatched" && deptUnits(r.assignedDepartment).includes(dept)
               )
               return (
                 <Marker key={dept} position={[base.lat, base.lng]} icon={getDeptIcon(dept)}>
@@ -1765,7 +1839,8 @@ const departments = [
               const deptColor = DEPT_COLORS[report.assignedDepartment] || "#2d5be3"
               const isDispatched = reportStatus(report) === "dispatched"
               const sign = statusSign(report)
-              const deptResp = deptResponders[report.id]
+              // One OTW pin per responding unit, so a combined department shows both.
+              const otwUnits = deptUnits(report.assignedDepartment)
               // Each piece of evidence is resolved on its own, so a report with a
               // photo and a video backup renders both players.
               const evidence = evidenceParts(report)
@@ -1773,27 +1848,32 @@ const departments = [
                 <div key={report.id}>
                   {/* ✅ P5 REVISION: Department-themed OTW line from Dagupan to the incident,
                       with the department responder emoji + OTW message moving along it */}
-                  {isDispatched && (
-                    <>
-                      {/* ✅ P10 REVISION: The colored themed line is the ROAD ROUTE
-                          polyline (OSRM) from the department's own base to the incident. */}
-                      <Polyline
-                        positions={deptRoutes[report.id] && deptRoutes[report.id].length > 1
-                          ? deptRoutes[report.id]
-                          : [[getDeptStart(report.assignedDepartment).lat, getDeptStart(report.assignedDepartment).lng], [lat, lng]]}
-                        pathOptions={{ color: deptColor, weight: 4, dashArray: "8, 8" }}
-                      />
-                      {deptResp && (
-                        <Marker position={[deptResp.lat, deptResp.lng]} icon={getDeptIcon(report.assignedDepartment)} ref={(ref) => { if (ref) popupRefs.current[`otw:${report.id}`] = ref }}>
-                          <Popup>
-                            <b>{DEPT_EMOJI[report.assignedDepartment] || "🚨"} {report.assignedDepartment}</b>
-                            <br />
-                            <small>🚗 OTW to incident</small>
-                          </Popup>
-                        </Marker>
-                      )}
-                    </>
-                  )}
+                  {isDispatched && otwUnits.map((unit) => {
+                    const key = `${report.id}:${unit}`
+                    const unitResp = deptResponders[key]
+                    const unitColor = DEPT_COLORS[unit] || deptColor
+                    const unitRoute = deptRoutes[key]
+                    return (
+                      <div key={key}>
+                        {/* The colored themed line is the ROAD ROUTE polyline (OSRM) from the unit's own base. */}
+                        <Polyline
+                          positions={unitRoute && unitRoute.length > 1
+                            ? unitRoute
+                            : [[getDeptStart(unit).lat, getDeptStart(unit).lng], [lat, lng]]}
+                          pathOptions={{ color: unitColor, weight: 4, dashArray: "8, 8" }}
+                        />
+                        {unitResp && (
+                          <Marker position={[unitResp.lat, unitResp.lng]} icon={getDeptIcon(unit)} ref={(ref) => { if (ref) popupRefs.current[`otw:${key}`] = ref }}>
+                            <Popup>
+                              <b>{DEPT_EMOJI[unit] || "🚨"} {unit}</b>
+                              <br />
+                              <small>🚗 OTW to incident</small>
+                            </Popup>
+                          </Marker>
+                        )}
+                      </div>
+                    )
+                  })}
                   <Marker key={report.id} position={[lat, lng]} icon={getMarkerIcon(reportType(report))} ref={(ref) => { if (ref) popupRefs.current[report.id] = ref }}>
                     <Popup>
                       <div style={{ width: "240px" }}>

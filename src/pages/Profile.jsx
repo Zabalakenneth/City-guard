@@ -137,9 +137,12 @@ resolvedBy: auth.currentUser?.email || "admin",
 autoResolved: false
 })
 
-// Drop this report's drive timeline entry and mark it resolved for the dashboard.
+// Drop this report's drive timeline entries and mark it resolved for the dashboard.
 const drives = { ...(loadSharedState().drives || {}) }
-delete drives[id]
+// A report can own several drives, one per responding unit.
+Object.keys(drives).forEach((k) => {
+  if (k === id || k.startsWith(`${id}:`)) delete drives[k]
+})
 const resolvedIds = Array.isArray(loadSharedState().resolvedIds) ? loadSharedState().resolvedIds : []
 if (!resolvedIds.includes(id)) resolvedIds.push(id)
 patchSharedState({ drives, resolvedIds })
@@ -157,12 +160,43 @@ const openAlert = (alert)=>{
 navigate(`/dashboard?reportId=${alert.id}`)
 }
 
-const reportType = (r) => r.aiCategory || r.type
+// Mirrors the dashboard: an unknown or legacy label is mapped to a known category.
+const CATEGORY_KEYWORDS = [
+  ["Fire", ["fire", "burn", "smoke"]],
+  ["Flood", ["flood", "water", "typhoon"]],
+  ["Accident", ["accident", "crash", "collision", "wreck", "vehicle", "traffic"]],
+  ["Crime", ["crime", "rob", "theft", "steal", "assault", "shoot", "stab", "gun", "violence", "fight"]],
+  ["Medical Emergency", ["medical", "ambulance", "heart", "drown", "injur", "wound", "bleed", "unconscious", "faint", "sick"]],
+  ["Terrorist", ["terror", "bomb", "explosive", "hostage", "attack"]]
+]
+
+const KNOWN_CATEGORIES = ["Fire", "Flood", "Medical Emergency", "Accident", "Crime", "Terrorist"]
+
+// Maps an unknown label to a known category, the same way the mobile app does.
+function normalizeCategory(raw) {
+  if (!raw) return raw
+  const value = String(raw).trim()
+  if (KNOWN_CATEGORIES.includes(value)) return value
+  const lower = value.toLowerCase()
+  for (const [category, words] of CATEGORY_KEYWORDS) {
+    if (words.some((w) => lower.includes(w))) return category
+  }
+  return value
+}
+
+const reportType = (r) => {
+  const ai = normalizeCategory(r.aiCategory)
+  const manual = normalizeCategory(r.type)
+  // Terrorist is a manual type the model cannot detect, so an explicit selection wins.
+  if (ai === "Terrorist" || manual === "Terrorist") return "Terrorist"
+  return ai || manual
+}
 const fireCount = reports.filter(r=>reportType(r)==="Fire").length
 const medicalCount = reports.filter(r=>reportType(r)==="Medical Emergency").length
 const accidentCount = reports.filter(r=>reportType(r)==="Accident").length
 const floodCount = reports.filter(r=>reportType(r)==="Flood").length
 const crimeCount = reports.filter(r=>reportType(r)==="Crime").length
+const terroristCount = reports.filter(r=>reportType(r)==="Terrorist").length
 
 // Response time uses the frozen value saved when the report was resolved or marked fake.
 const formatResponseTime = (createdAt, endAt, responseSeconds) => {
@@ -216,6 +250,7 @@ medicalCount,
 accidentCount,
 floodCount,
 crimeCount,
+terroristCount,
 1
 )
 
@@ -350,6 +385,11 @@ INCIDENT ANALYTICS
 <div style={{width:bar(crimeCount),height:"12px",background:"black"}}/>
 </div>
 
+<p style={{marginTop:"15px"}}>🚨 Terrorist ({terroristCount})</p>
+<div style={{background:"#eee",height:"12px",borderRadius:"4px"}}>
+<div style={{width:bar(terroristCount),height:"12px",background:"#7c3aed"}}/>
+</div>
+
 </div>
 </div>
 
@@ -373,7 +413,7 @@ alignItems:"center"
 }}>
 
 <div onClick={()=>openAlert(a)} style={{cursor:"pointer"}}>
-<b>{a.type || a.aiCategory}</b>
+<b>{reportType(a) || "Emergency"}</b>
 <br/>
 <small>{a.description}</small>
 </div>
@@ -400,6 +440,7 @@ EMERGENCY HISTORY
 <button onClick={()=>setHistoryFilter("Accident")}>🚗 Accident</button>
 <button onClick={()=>setHistoryFilter("Flood")}>🌊 Flood</button>
 <button onClick={()=>setHistoryFilter("Crime")}>🚓 Crime</button>
+<button onClick={()=>setHistoryFilter("Terrorist")}>🚨 Terrorist</button>
 <span style={{marginLeft:"10px"}}>Status:</span>
 {["All","Pending","Dispatched","Resolved","Rejected"].map((s)=>(
   <button
