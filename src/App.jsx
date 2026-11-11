@@ -1,12 +1,16 @@
+
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+
 import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import Dashboard from "./pages/Dashboard";
+import DepartmentDashboard from "./pages/DepartmentDashboard";
 import Profile from "./pages/Profile";
 import SystemSettings from "./pages/SystemSettings";
 
 function PrivateRoute({ children }) {
   const fakeAuth = localStorage.getItem("cityguard_auth") === "1";
+
   return fakeAuth ? children : <Navigate to="/" />;
 }
 
@@ -21,7 +25,7 @@ export default function App() {
         {/* FORGOT PASSWORD */}
         <Route path="/forgot-password" element={<ForgotPassword />} />
 
-        {/* DASHBOARD (Protected) */}
+        {/* ADMIN DASHBOARD */}
         <Route
           path="/dashboard"
           element={
@@ -31,7 +35,17 @@ export default function App() {
           }
         />
 
-        {/* PROFILE / ADMIN (Protected) */}
+        {/* DEPARTMENT DASHBOARD */}
+        <Route
+          path="/department"
+          element={
+            <PrivateRoute>
+              <DepartmentDashboard />
+            </PrivateRoute>
+          }
+        />
+
+        {/* PROFILE */}
         <Route
           path="/profile"
           element={
@@ -41,7 +55,7 @@ export default function App() {
           }
         />
 
-        {/* SYSTEM SETTINGS (Protected) */}
+        {/* SYSTEM SETTINGS */}
         <Route
           path="/system-settings"
           element={

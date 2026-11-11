@@ -489,15 +489,20 @@ function evidenceParts(r) {
 //               most appropriate first responder for an accident; PNP is a
 //               reasonable alternative for traffic/road accidents)
 const autoDetectDept = (r) => {
-  const cat = reportType(r)
-  if (cat === "Fire") return "BFP"
-  if (cat === "Crime") return "PNP"
-  if (cat === "Flood") return "CDRRMO/MDRRMO"
-  if (cat === "Medical Emergency") return "Medical Emergency Team and Responders"
-  if (cat === "Accident") return "Medical Emergency Team and Responders"
-  return "BFP" // default fallback
-}
+  const cat = reportType(r);
 
+  if (cat === "Terrorist") {
+    return ["PNP", "Medical Emergency Team and Responders"];
+  }
+
+  if (cat === "Fire") return "BFP";
+  if (cat === "Crime") return "PNP";
+  if (cat === "Flood") return "CDRRMO/MDRRMO";
+  if (cat === "Medical Emergency") return "Medical Emergency Team and Responders";
+  if (cat === "Accident") return "Medical Emergency Team and Responders";
+
+  return "BFP";
+};
 function Dashboard() {
   const auth = getAuth()
   const navigate = useNavigate()
@@ -999,48 +1004,55 @@ function Dashboard() {
   // This writes ONLY the responding department fields (assignedDepartment,
   // status, dispatchedAt, assignedBy). It MUST NEVER write `type` or
   // `aiCategory` — the incident's category stays the ORIGINAL AI-suggested one.
-  const assignDepartment = async (id, dept) => {
-    if (!dept) return
-    try {
-      await updateDoc(doc(db, "reports", id), {
-        assignedDepartment: dept,
-        status: "dispatched",
-        dispatchedAt: new Date(),
-        assignedBy: auth.currentUser?.email || "admin"
-      })
-      // ✅ FIX (P24 REVISION): anchor this drive's timeline IMMEDIATELY and persist it.
-      // Before this, the dispatch instant only reached storage on the next 1-second
-      // tick, so navigating to System Settings / Profile straight after Assign could
-      // lose it and the pin would resume on the wrong spot. `anchor` is the local
-      // dispatch time (not the Firestore round-trip), so it is exact.
-      const dispatchedReport = reportsRef.current.find((x) => x.id === id)
-      if (dispatchedReport && dispatchedReport.location) {
-        const lat = Number(dispatchedReport.location.latitude)
-        const lng = Number(dispatchedReport.location.longitude)
-        if (!isNaN(lat) && !isNaN(lng)) {
-          const seeded = {
-            ...drivesRef.current,
-            [id]: {
-              anchor: Date.now(),
-              start: getDeptStart(dept),
-              dest: { lat, lng },
-              dept,
-              route: deptRoutes[id] && deptRoutes[id].length > 1 ? deptRoutes[id] : null
-            }
-          }
-          drivesRef.current = seeded
-          setDrives(seeded)
-          setDeptResponders(tickResponders(seeded, Date.now()))
-          patchSharedState({ drives: seeded })
-        }
-      }
-      enqueueSound(null, "Fire") // notify sound on assignment
-    } catch (err) {
-      console.log(err)
-      alert("Error assigning department")
-    }
-  }
+const assignDepartment = async (id, dept) => {
+  if (!dept) return;
 
+  try {
+    const departments = Array.isArray(dept) ? dept : [dept];
+    const primaryDept = departments[0];
+
+    await updateDoc(doc(db, "reports", id), {
+      assignedDepartment: primaryDept,
+      assignedDepartments: departments,
+      status: "dispatched",
+      dispatchedAt: new Date(),
+      assignedBy: auth.currentUser?.email || "admin"
+    });
+
+    const dispatchedReport = reportsRef.current.find((x) => x.id === id);
+
+    if (dispatchedReport && dispatchedReport.location) {
+      const lat = Number(dispatchedReport.location.latitude);
+      const lng = Number(dispatchedReport.location.longitude);
+
+      if (!isNaN(lat) && !isNaN(lng)) {
+        const seeded = {
+          ...drivesRef.current,
+          [id]: {
+            anchor: Date.now(),
+            start: getDeptStart(primaryDept),
+            dest: { lat, lng },
+            dept: primaryDept,
+            route: deptRoutes[id] && deptRoutes[id].length > 1
+              ? deptRoutes[id]
+              : null
+          }
+        };
+
+        drivesRef.current = seeded;
+        setDrives(seeded);
+        setDeptResponders(tickResponders(seeded, Date.now()));
+        patchSharedState({ drives: seeded });
+      }
+    }
+
+    enqueueSound(null, "Fire");
+
+  } catch (err) {
+    console.log(err);
+    alert("Error assigning department");
+  }
+};
   // Marks a report as fake and freezes its elapsed time, the same way resolving does.
   const rejectReport = async (id) => {
     if (!window.confirm("Mark this report as FAKE / not a real incident? This cannot be undone.")) return
