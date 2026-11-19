@@ -58,6 +58,7 @@ const [uptime,setUptime] = useState(0)
 const [historyFilter,setHistoryFilter] = useState("All")
 const [statusFilter,setStatusFilter] = useState("All")
 const [deptFilter,setDeptFilter] = useState("All")
+const [dateSort,setDateSort] = useState("desc")
 
 // USER + TIME
 useEffect(()=>{
@@ -129,20 +130,38 @@ const resolvedAt = new Date()
 const startMs = target ? toMs(target.createdAt) : 0
 const responseSeconds = startMs ? Math.max(0, Math.floor((resolvedAt.getTime() - startMs) / 1000)) : null
 
+// An admin resolve closes every assigned department, so the department dashboards agree.
+const assigned = target
+  ? (Array.isArray(target.assignedDepartments) && target.assignedDepartments.length
+      ? target.assignedDepartments
+      : [target.assignedDepartment].filter(Boolean))
+  : []
+const resolvedAtByDept = { ...((target && target.resolvedAtByDept) || {}) }
+assigned.forEach((dept) => { if (!resolvedAtByDept[dept]) resolvedAtByDept[dept] = resolvedAt })
+
 await updateDoc(doc(db,"reports",id),{
 status: "resolved",
 resolvedAt,
 responseSeconds,
 resolvedBy: auth.currentUser?.email || "admin",
-autoResolved: false
+autoResolved: false,
+resolvedByDepartments: assigned,
+resolvedAtByDept
 })
 
-// Drop this report's drive timeline entry and mark it resolved for the dashboard.
+// Drop this report's drive timeline entries and mark it resolved for the dashboard.
 const drives = { ...(loadSharedState().drives || {}) }
-delete drives[id]
+// A report can own one drive per department, so remove every key that belongs to it.
+Object.keys(drives).forEach((k) => { if (k === id || k.startsWith(`${id}::`)) delete drives[k] })
 const resolvedIds = Array.isArray(loadSharedState().resolvedIds) ? loadSharedState().resolvedIds : []
 if (!resolvedIds.includes(id)) resolvedIds.push(id)
-patchSharedState({ drives, resolvedIds })
+// Record this resolve as already announced, so the dashboard never pops it up later.
+const announced = Array.isArray(loadSharedState().announcedResolves) ? loadSharedState().announcedResolves : []
+assigned.forEach((dept) => {
+  const key = `${id}::${dept}`
+  if (!announced.includes(key)) announced.push(key)
+})
+patchSharedState({ drives, resolvedIds, announcedResolves: announced.slice(-200) })
 }catch(err){
 console.error("Resolve error:", err)
 }
@@ -198,17 +217,57 @@ const formatDate = (timestamp) => {
   return d.toLocaleString()
 }
 
+// Departments that must each resolve this report; a terrorist report needs both PNP and medical.
+const assignedDepts = (r) =>
+  Array.isArray(r.assignedDepartments) && r.assignedDepartments.length
+    ? r.assignedDepartments
+    : [r.assignedDepartment].filter(Boolean)
+
+// Badge colours and label for a status, shared by the single and per-department cells.
+const statusBadge = (status) => ({
+  label:
+    status === "resolved" ? "\u2713 RESOLVED"
+    : status === "rejected" ? "\u2717 REJECTED"
+    : status === "dispatched" ? "\ud83d\ude9a OTW"
+    : "\u25cf PENDING",
+  background:
+    status === "resolved" ? "#dcfce7"
+    : status === "rejected" ? "#f3f4f6"
+    : status === "dispatched" ? "#dbeafe"
+    : "#fee2e2",
+  color:
+    status === "resolved" ? "#166534"
+    : status === "rejected" ? "#6b7280"
+    : status === "dispatched" ? "#1d4ed8"
+    : "#b91c1c"
+})
+
+// Full department label naming every responder, so a terrorist report shows both.
+const deptLabel = (r) => assignedDepts(r).join(" and ")
+
+// True only when the report itself is resolved, which matches the single status badge.
+const anyDeptResolved = (r) => r.status === "resolved"
+
 // Filtering by type, status, department for the Emergency History table
-const departments = [...new Set(reports.map((r) => r.assignedDepartment).filter(Boolean))]
+const departments = [...new Set(reports.flatMap((r) => assignedDepts(r)))]
 const filteredReports = reports.filter((r) => {
   if (historyFilter !== "All" && reportType(r) !== historyFilter) return false
   if (statusFilter === "Pending" && r.status !== "pending") return false
   if (statusFilter === "Dispatched" && r.status !== "dispatched") return false
-  if (statusFilter === "Resolved" && r.status !== "resolved") return false
+  // A terrorist report reaches resolved only after both departments have resolved.
+  if (statusFilter === "Resolved" && !anyDeptResolved(r)) return false
   if (statusFilter === "Rejected" && r.status !== "rejected") return false
-  if (deptFilter !== "All" && r.assignedDepartment !== deptFilter) return false
+  if (deptFilter !== "All" && !assignedDepts(r).includes(deptFilter)) return false
   return true
 })
+
+// Reads a report time for sorting, so a string or Date createdAt sorts like a Timestamp.
+const reportTime = (r) => toMs(r.createdAt)
+
+// Sorted copy of the filtered rows, so the whole table follows the chosen direction.
+const sortedReports = [...filteredReports].sort((a, b) =>
+  dateSort === "desc" ? reportTime(b) - reportTime(a) : reportTime(a) - reportTime(b)
+)
 
 const max = Math.max(
 fireCount,
@@ -400,6 +459,7 @@ EMERGENCY HISTORY
 <button onClick={()=>setHistoryFilter("Accident")}>🚗 Accident</button>
 <button onClick={()=>setHistoryFilter("Flood")}>🌊 Flood</button>
 <button onClick={()=>setHistoryFilter("Crime")}>🚓 Crime</button>
+<button onClick={()=>setHistoryFilter("Terrorist")}>💣 Terrorist</button>
 <span style={{marginLeft:"10px"}}>Status:</span>
 {["All","Pending","Dispatched","Resolved","Rejected"].map((s)=>(
   <button
@@ -432,7 +492,16 @@ EMERGENCY HISTORY
 }}>
 <thead>
 <tr style={{background:"#f5f5f5"}}>
-  <th style={{width:"13%",padding:"10px",textAlign:"left"}}>Date</th>
+  {/* Clicking the Date header toggles the sort direction. */}
+  <th style={{width:"13%",padding:"10px",textAlign:"left"}}>
+    <span
+      onClick={()=>setDateSort(dateSort==="desc"?"asc":"desc")}
+      style={{cursor:"pointer",userSelect:"none"}}
+      title={dateSort==="desc"?"Newest first":"Oldest first"}
+    >
+      Date {dateSort==="desc" ? "▼" : "▲"}
+    </span>
+  </th>
   <th style={{width:"9%",padding:"10px",textAlign:"left"}}>Type</th>
   <th style={{width:"25%",padding:"10px",textAlign:"left"}}>Description</th>
   <th style={{width:"13%",padding:"10px",textAlign:"left"}}>Reporter</th>
@@ -444,13 +513,7 @@ EMERGENCY HISTORY
 
 <tbody>
 
-{filteredReports
-.sort((a,b)=>{
-const aTime = a.createdAt?.seconds || 0
-const bTime = b.createdAt?.seconds || 0
-return bTime - aTime
-})
-.map((r)=>(
+{sortedReports.map((r)=>(
 
 <tr key={r.id}>
 <td>{formatDate(r.createdAt)}</td>
@@ -465,44 +528,26 @@ return bTime - aTime
   {r.description || "—"}
 </td>
 <td>{r.reporterName || "—"}</td>
-<td>{r.assignedDepartment || "—"}</td>
+<td>{deptLabel(r) || "—"}</td>
 <td style={{padding:"10px"}}>
+  {/* One status badge per report, so a resolved report simply reads RESOLVED. */}
   <span style={{
     display:"inline-block",
     padding:"5px 8px",
     borderRadius:"12px",
     fontSize:"11px",
     fontWeight:"bold",
-    background:
-      r.status==="resolved"
-        ? "#dcfce7"
-        : r.status==="rejected"
-        ? "#f3f4f6"
-        : r.status==="dispatched"
-        ? "#dbeafe"
-        : "#fee2e2",
-    color:
-      r.status==="resolved"
-        ? "#166534"
-        : r.status==="rejected"
-        ? "#6b7280"
-        : r.status==="dispatched"
-        ? "#1d4ed8"
-        : "#b91c1c"
+    background:statusBadge(r.status).background,
+    color:statusBadge(r.status).color
   }}>
-    {r.status==="resolved"
-      ? "✓ RESOLVED"
-      : r.status==="rejected"
-      ? "✗ REJECTED"
-      : r.status==="dispatched"
-      ? "🚚 OTW"
-      : "● PENDING"}
+    {statusBadge(r.status).label}
   </span>
 </td>
 <td style={{
   padding:"10px",
   whiteSpace:"nowrap"
 }}>
+  {/* One elapsed time per report, taken from the value the dashboard froze on resolve. */}
   {r.status==="resolved" || r.status==="rejected"
     ? formatResponseTime(r.createdAt, r.resolvedAt || r.rejectedAt, r.responseSeconds)
     : "—"}

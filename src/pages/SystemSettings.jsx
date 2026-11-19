@@ -105,7 +105,8 @@ function SystemSettings() {
         setResponseCriticalMin(data.responseCriticalMin ?? 20)
         setTestRadiusKm(data.testRadiusKm ?? 200)
       }
-      patchSharedState({ drives })
+      // Only write the drive timeline back when this screen actually holds one.
+      if (Object.keys(drives).length > 0) patchSharedState({ drives })
       setLoading(false)
     } catch (err) {
       console.log(err)

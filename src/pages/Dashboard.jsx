@@ -53,7 +53,7 @@ function patchSharedState(patch) {
 
 // ✅ P1 REVISION: Only 5 categories (Others removed)
 const CATEGORIES = [
-  "Fire", "Flood", "Medical Emergency", "Accident", "Crime"
+  "Fire", "Flood", "Medical Emergency", "Accident", "Crime", "Terrorist"
 ]
 
 // ✅ P1 REVISION: Department-themed colors (used for markers + OTW lines)
@@ -190,6 +190,45 @@ function routeLength(route) {
   return total
 }
 
+// Fixed precision for a stored route, so both screens measure the identical line.
+const ROUTE_DECIMALS = 5
+
+function roundCoord(value) {
+  const factor = Math.pow(10, ROUTE_DECIMALS)
+  return Math.round(value * factor) / factor
+}
+
+// Turns any route shape into rounded [lat, lng] pairs, so both maps sum the same metres.
+function normalizeRoute(route) {
+  if (!Array.isArray(route) || route.length < 2) return null
+  const out = []
+  for (let i = 0; i < route.length; i++) {
+    const p = route[i]
+    const lat = Array.isArray(p) ? p[0] : p && p.lat
+    const lng = Array.isArray(p) ? p[1] : p && p.lng
+    if (typeof lat !== "number" || typeof lng !== "number") continue
+    out.push([roundCoord(lat), roundCoord(lng)])
+  }
+  return out.length > 1 ? out : null
+}
+
+// Points a route from the base to the incident, so the line never draws backwards.
+function orientRoute(route, start, dest) {
+  if (!route || route.length < 2) return route
+  const first = route[0]
+  const last = route[route.length - 1]
+  const firstToStart = distanceMeters(first[0], first[1], start.lat, start.lng)
+  const lastToStart = distanceMeters(last[0], last[1], start.lat, start.lng)
+  return lastToStart < firstToStart ? [...route].reverse() : route
+}
+
+// Firestore rejects an array inside an array, so a saved route point is a small map.
+function routeToPlain(route) {
+  const normalized = normalizeRoute(route)
+  if (!normalized) return null
+  return normalized.map((p) => ({ lat: p[0], lng: p[1] }))
+}
+
 // ✅ P10 REVISION: Move a responder `step` meters forward along a road route
 // polyline from its current position (returns the new {lat,lng}).
 function moveAlongRoute(route, cur, step) {
@@ -220,12 +259,10 @@ function moveAlongRoute(route, cur, step) {
   return pos
 }
 
-// ✅ FIX (P23 REVISION): Simulated responder speed in metres per SECOND. The OTW
-// position is now derived from this speed and the wall clock (dispatchedAt -> now)
-// instead of being nudged forward by a per-tick increment. The number is deliberately
-// the same pace this dashboard already used (250 m per 1-second tick), so a drive still
-// takes exactly as long as before - only its timing source changed.
-const RESPONDER_SPEED_MPS = 250
+// Real road speed of a responding vehicle, shown as km/h on every OTW card.
+const RESPONDER_SPEED_KMH = 50
+// The same speed in metres per second, so the pin and the ETA can never disagree.
+const RESPONDER_SPEED_MPS = RESPONDER_SPEED_KMH / 3.6
 
 // ✅ FIX (P23 REVISION): the point `meters` along a route polyline. Because it is an
 // ABSOLUTE distance from the START of the route (rather than "move N metres from
@@ -262,7 +299,8 @@ function computeDrivePos(drive, now) {
   const start = drive.start || DAGUPAN_CENTER
   const anchor = typeof drive.anchor === "number" ? drive.anchor : now
   const elapsedSec = Math.max(0, (now - anchor) / 1000)
-  const route = drive.route && drive.route.length > 1 ? drive.route : null
+  // The pin walks the same rounded route the department map reads, so both land together.
+  const route = normalizeRoute(drive.route)
   const total = route
     ? routeLength(route)
     : distanceMeters(start.lat, start.lng, drive.dest.lat, drive.dest.lng)
@@ -284,6 +322,138 @@ function computeDrivePos(drive, now) {
   }
 }
 
+// Formats seconds as "5m 22s" so every ETA and travel time reads the same way.
+function formatDuration(totalSeconds) {
+  const sec = Math.max(0, Math.round(totalSeconds || 0))
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return `${m}m ${s}s`
+}
+
+// Live trip figures for one drive, taken from the same clock the pin uses.
+function driveStats(drive, now) {
+  if (!drive || !drive.dest) return null
+  const start = drive.start || DAGUPAN_CENTER
+  // The route is rounded the same way it is saved, so the card and the pin agree exactly.
+  const route = normalizeRoute(drive.route)
+  const metres = route
+    ? routeLength(route)
+    : distanceMeters(start.lat, start.lng, drive.dest.lat, drive.dest.lng)
+  return tripStatsFrom({
+    anchorMs: typeof drive.anchor === "number" ? drive.anchor : now,
+    metres,
+    speedKmh: RESPONDER_SPEED_KMH
+  }, now)
+}
+
+// One trip calculation shared by the admin and department screens, so the numbers match.
+function tripStatsFrom(record, now) {
+  if (!record || !record.metres) return null
+  const anchorMs = typeof record.anchorMs === "number" ? record.anchorMs : now
+  const speedKmh = record.speedKmh || RESPONDER_SPEED_KMH
+  const travelSec = record.metres / (speedKmh / 3.6)
+  const elapsedSec = Math.max(0, (now - anchorMs) / 1000)
+  const travelledSec = Math.min(travelSec, elapsedSec)
+  return {
+    km: record.metres / 1000,
+    travelSec: travelledSec,
+    etaSec: Math.max(0, travelSec - travelledSec),
+    speedKmh,
+    arrived: travelledSec >= travelSec
+  }
+}
+
+// The trip inputs saved on the report, so every screen reads the same distance and clock.
+function tripRecordFor(report, dept, drives) {
+  const drive = driveForReport(report, dept, drives)
+  if (!drive || !drive.dest) return null
+  const start = drive.start || DAGUPAN_CENTER
+  const route = normalizeRoute(drive.route)
+  const metres = route
+    ? routeLength(route)
+    : distanceMeters(start.lat, start.lng, drive.dest.lat, drive.dest.lng)
+  const anchorMs = typeof drive.anchor === "number" ? drive.anchor : dispatchedAtFor(report, dept)
+  if (!metres || !anchorMs) return null
+  const record = { anchorMs, metres, speedKmh: RESPONDER_SPEED_KMH }
+  // The road path is saved too, so the department pin walks the same line.
+  if (route) record.route = routeToPlain(route)
+  return record
+}
+
+// The trip inputs for every responding department, saved so the department screens match.
+function tripRecordsFor(report, drives) {
+  const out = {}
+  dispatchedDeptsOf(report).forEach((dept) => {
+    const rec = tripRecordFor(report, dept, drives)
+    if (rec) out[dept] = rec
+  })
+  return out
+}
+
+// The stopped figures of a finished trip, so a resolved card never keeps counting.
+function frozenStatsFor(report, dept, tripLog) {
+  const key = `${report.id}::${dept}`
+  const saved = tripLog && (tripLog[key] || tripLog[report.id])
+  if (saved) return saved
+  if (!report.location) return null
+  const lat = Number(report.location.latitude)
+  const lng = Number(report.location.longitude)
+  if (isNaN(lat) || isNaN(lng)) return null
+  const start = getDeptStart(dept)
+  const km = distanceMeters(start.lat, start.lng, lat, lng) / 1000
+  const startMs = dispatchedAtFor(report, dept)
+  // A department that resolved first freezes at its own resolve instant.
+  const endMs =
+    toMs((report.resolvedAtByDept || {})[dept]) ||
+    toMs(report.resolvedAt || report.rejectedAt)
+  const elapsedSec = startMs && endMs ? Math.max(0, (endMs - startMs) / 1000) : 0
+  // Cap the travel time at the time the drive itself needs, so a late resolve cannot inflate it.
+  const travelSec = Math.min(elapsedSec, km * 1000 / RESPONDER_SPEED_MPS)
+  return { km, travelSec, etaSec: 0, speedKmh: RESPONDER_SPEED_KMH }
+}
+
+// The drive record for one report and department, rebuilt from the report when the
+// timeline has not been seeded yet, so a dispatched card always shows its figures.
+function driveForReport(report, dept, drives) {
+  const key = `${report.id}::${dept}`
+  if (drives && drives[key]) return drives[key]
+  // A department that has not assigned a team has no drive, so its figures never start.
+  if (!dispatchedDeptsOf(report).includes(dept)) return null
+  if (!report.location) return null
+  const lat = Number(report.location.latitude)
+  const lng = Number(report.location.longitude)
+  if (isNaN(lat) || isNaN(lng)) return null
+  return {
+    reportId: report.id,
+    anchor: dispatchedAtFor(report, dept) || Date.now(),
+    start: getDeptStart(dept),
+    dest: { lat, lng },
+    dept,
+    route: null
+  }
+}
+
+// The vehicle emoji for a trip line, taken from the same car the driving pin shows.
+function vehicleEmoji(type, dept) {
+  // The pin draws DEPT_EMOJI[dept], so the line reuses it and the two can never differ.
+  if (dept && DEPT_EMOJI[dept]) return DEPT_EMOJI[dept]
+  const t = String(type || "").toLowerCase()
+  // A report with no known department still gets a car from its incident type.
+  if (t.includes("medical") || t.includes("accident")) return "🚑"
+  if (t.includes("crime") || t.includes("terrorist")) return "🚓"
+  return "🚨"
+}
+
+// One line of trip figures, shared by the incident card and the driving pin popup.
+function TripLine({ stats, stopped, type, dept }) {
+  if (!stats) return null
+  return (
+    <div style={{ fontSize: "11px", color: stopped ? "#15803d" : "#2d5be3", marginTop: "4px" }}>
+      {vehicleEmoji(type, dept)} {stopped ? "Resolved" : "Dispatched"} · ETA {formatDuration(stats.etaSec)} · travelling {formatDuration(stats.travelSec)} · 📏 {stats.km.toFixed(1)} km · {stats.speedKmh} km/h
+    </div>
+  )
+}
+
 // ✅ FIX (P24 REVISION): build the drive timeline from the currently-dispatched
 // incidents. The existing anchor is KEPT when there already is one, so the locally
 // recorded dispatch instant wins over the value that comes back from Firestore - a
@@ -295,24 +465,46 @@ function buildDrives(reports, deptRoutes, prevDrives) {
   const prev = prevDrives || {}
   const next = {}
   reports.forEach((r) => {
-    if (!r || r.status !== "dispatched" || !r.assignedDepartment || !r.location) return
+    if (!r || !r.location) return
+    // A partially dispatched report still drives, so the first team moves alone.
+    const depts = activeDeptsOf(r)
+    if (!depts.length) return
     const lat = Number(r.location.latitude)
     const lng = Number(r.location.longitude)
     if (isNaN(lat) || isNaN(lng)) return
-    const existing = prev[r.id]
-    const fetched = deptRoutes && deptRoutes[r.id]
-    const route = fetched && fetched.length > 1 ? fetched : (existing && existing.route ? existing.route : null)
-    next[r.id] = {
-      anchor: existing && typeof existing.anchor === "number"
-        ? existing.anchor
-        : (r.dispatchedAt && r.dispatchedAt.seconds
-            ? r.dispatchedAt.seconds * 1000
-            : (r.dispatchedAt ? new Date(r.dispatchedAt).getTime() : now)),
-      start: getDeptStart(r.assignedDepartment),
-      dest: { lat, lng },
-      dept: r.assignedDepartment,
-      route
-    }
+    // One drive per department that assigned a team, so each pin starts on its own.
+    depts.forEach((dept) => {
+      const key = `${r.id}::${dept}`
+      const existing = prev[key]
+      const fetched = deptRoutes && deptRoutes[key]
+      // The saved record is the fallback, so a remount drives the same path as the department map.
+      const saved = r.tripRecords && r.tripRecords[dept]
+      const route = orientRoute(
+        normalizeRoute(
+          fetched && fetched.length > 1
+            ? fetched
+            : (existing && existing.route)
+                ? existing.route
+                : (saved && saved.route) || null
+        ),
+        getDeptStart(dept),
+        { lat, lng }
+      )
+      // The saved clock is the fallback too, so both maps count from the same instant.
+      const savedAnchor = saved && typeof saved.anchorMs === "number" ? saved.anchorMs : null
+      // Each department counts from its own dispatch instant, never the other one's.
+      const deptAnchor = dispatchedAtFor(r, dept)
+      next[key] = {
+        reportId: r.id,
+        anchor: existing && typeof existing.anchor === "number"
+          ? existing.anchor
+          : (savedAnchor !== null ? savedAnchor : (deptAnchor || now)),
+        start: getDeptStart(dept),
+        dest: { lat, lng },
+        dept,
+        route
+      }
+    })
   })
   return next
 }
@@ -322,9 +514,10 @@ function buildDrives(reports, deptRoutes, prevDrives) {
 // remount - which is what removes the visible pause.
 function tickResponders(drives, now) {
   const out = {}
-  Object.keys(drives || {}).forEach((id) => {
-    const pos = computeDrivePos(drives[id], now)
-    if (pos) out[id] = pos
+  Object.keys(drives || {}).forEach((key) => {
+    const pos = computeDrivePos(drives[key], now)
+    // Carry the report id so a stopped pin can stamp its own department's arrival.
+    if (pos) out[key] = { ...pos, reportId: drives[key].reportId }
   })
   return out
 }
@@ -443,7 +636,12 @@ const STATUS_SIGNS = {
 }
 
 // Returns the single sign for a report, or null when it should show none.
-const statusSign = (r) => STATUS_SIGNS[reportStatus(r)] || null
+const statusSign = (r) => {
+  // A report with any team already sent reads as OTW, even before the other one goes.
+  if (reportStatus(r) === "pending" && dispatchedDeptsOf(r).length)
+    return STATUS_SIGNS.dispatched
+  return STATUS_SIGNS[reportStatus(r)] || null
+}
 
 // Video extensions Cloudinary uses. The mobile app stores the video URL in
 // imageUrl whenever the report has no photo, so the extension is the only
@@ -503,6 +701,38 @@ const autoDetectDept = (r) => {
 
   return "BFP";
 };
+
+// Every department that must answer a report; a terrorist report needs both PNP and medical.
+const assignedDeptsOf = (r) =>
+  Array.isArray(r.assignedDepartments) && r.assignedDepartments.length
+    ? r.assignedDepartments
+    : [r.assignedDepartment].filter(Boolean);
+
+// Card label naming every responding department, so a terrorist report shows both.
+const deptLabel = (r) => assignedDeptsOf(r).join(" and ");
+
+// True once the admin endorsed a still-pending report to a department.
+const isEndorsed = (r) => !!r.endorsedAt && reportStatus(r) !== "rejected";
+
+// Departments that already assigned a team, so each one drives on its own.
+const dispatchedDeptsOf = (r) => {
+  if (Array.isArray(r.dispatchedByDepartments) && r.dispatchedByDepartments.length)
+    return r.dispatchedByDepartments
+  // Older reports have no per-department list, so a dispatched report counts for all.
+  return reportStatus(r) === "dispatched" ? assignedDeptsOf(r) : []
+}
+
+// Departments still driving, so a team that already resolved owns no pin.
+const activeDeptsOf = (r) => {
+  if (reportStatus(r) === "resolved") return []
+  const done = Array.isArray(r.resolvedByDepartments) ? r.resolvedByDepartments : []
+  return dispatchedDeptsOf(r).filter((d) => !done.includes(d))
+}
+
+// The instant one department dispatched, so each pin starts its own clock.
+const dispatchedAtFor = (r, dept) =>
+  toMs((r.dispatchedAtByDept || {})[dept]) || toMs(r.dispatchedAt)
+
 function Dashboard() {
   const auth = getAuth()
   const navigate = useNavigate()
@@ -539,6 +769,46 @@ function Dashboard() {
   const [alertPopup, setAlertPopup] = useState(null)
   // Elapsed-time alerts are kept in a list so the 10 and 20 minute ones can both show.
   const [timeAlerts, setTimeAlerts] = useState([])
+  // Popup shown when a driving pin stops at the incident, telling the admin to wait.
+  const [arrivalNotice, setArrivalNotice] = useState(null)
+  // Popup shown when a department resolves, so the admin sees who closed the report.
+  const [resolveNotice, setResolveNotice] = useState(null)
+  // Popup shown after the admin endorses an incident to a department.
+  const [assignNotice, setAssignNotice] = useState(null)
+  // Popup shown after the department assigns its own team.
+  const [teamNotice, setTeamNotice] = useState(null)
+  // Last known status per report, so a pending to dispatched change can be detected.
+  const prevStatusRef = useRef({})
+  // True once the first snapshot is read, so old dispatches are never announced.
+  const dispatchSeededRef = useRef(false)
+
+  // Auto-dismiss the assign popup after a few seconds.
+  useEffect(() => {
+    if (!assignNotice) return
+    const timer = setTimeout(() => setAssignNotice(null), 8000)
+    return () => clearTimeout(timer)
+  }, [assignNotice])
+
+  // Auto-dismiss the team popup after a few seconds.
+  useEffect(() => {
+    if (!teamNotice) return
+    const timer = setTimeout(() => setTeamNotice(null), 8000)
+    return () => clearTimeout(timer)
+  }, [teamNotice])
+
+  // Auto-dismiss the arrival popup after a few seconds.
+  useEffect(() => {
+    if (!arrivalNotice) return
+    const timer = setTimeout(() => setArrivalNotice(null), 8000)
+    return () => clearTimeout(timer)
+  }, [arrivalNotice])
+
+  // Auto-dismiss the resolve popup after a few seconds.
+  useEffect(() => {
+    if (!resolveNotice) return
+    const timer = setTimeout(() => setResolveNotice(null), 8000)
+    return () => clearTimeout(timer)
+  }, [resolveNotice])
 
   // Adds an elapsed-time alert without dropping the one already showing.
   const pushTimeAlert = (level, text) => {
@@ -597,6 +867,21 @@ function Dashboard() {
   const [drives, setDrives] = useState(persisted?.drives || {})
   const drivesRef = useRef(persisted?.drives || {})
 
+  // Final trip figures per drive, saved when the pin stops so a resolved card stays frozen.
+  const [tripLog, setTripLog] = useState(persisted?.tripLog || {})
+  const tripLogRef = useRef(persisted?.tripLog || {})
+
+  // Reports whose arrival stamp was already written, so a stopped pin writes it once.
+  const arrivedWrittenRef = useRef(new Set())
+  // Reports whose arrival popup was already shown, seeded from the saved ledger.
+  const arrivalAnnouncedRef = useRef(
+    new Set(
+      Array.isArray(loadSharedState().announcedArrivals)
+        ? loadSharedState().announcedArrivals
+        : []
+    )
+  )
+
   // ✅ FIX (P24 REVISION): incidents resolved ELSEWHERE (Profile.jsx can resolve one from
   // its EMERGENCY HISTORY table) are read from the shared record on mount. Without this the
   // dashboard trusted only its own bookkeeping, so a mount after an admin resolved from the
@@ -653,15 +938,17 @@ function Dashboard() {
   // the same when an admin resolves from the Profile screen, which keeps the two
   // screens from disagreeing about which incidents are still being driven to.
   const clearDrive = (id) => {
-    if (!drivesRef.current[id]) return
+    // A report can own one drive per department, so drop every key that belongs to it.
+    const prefix = `${id}::`
+    const keys = Object.keys(drivesRef.current).filter((k) => k === id || k.startsWith(prefix))
+    if (keys.length === 0) return
     const next = { ...drivesRef.current }
-    delete next[id]
+    keys.forEach((k) => delete next[k])
     drivesRef.current = next
     setDrives(next)
     setDeptResponders((prev) => {
-      if (!prev[id]) return prev
       const n = { ...prev }
-      delete n[id]
+      keys.forEach((k) => delete n[k])
       return n
     })
     patchSharedState({ drives: next })
@@ -720,6 +1007,7 @@ function Dashboard() {
     patchSharedState({
       deptResponders,
       drives,
+      tripLog,
       deptRoutes,
       deptSelection,
       alertedReports,
@@ -728,7 +1016,7 @@ function Dashboard() {
       settings,
       resolvedIds: [...resolvedIds]
     })
-  }, [deptResponders, drives, deptRoutes, deptSelection, alertedReports, alertedReportIds, clearedNotifIds, settings, resolvedIds])
+  }, [deptResponders, drives, tripLog, deptRoutes, deptSelection, alertedReports, alertedReportIds, clearedNotifIds, settings, resolvedIds])
 
   const enqueueSound = (type, category) => {
     setSoundQueue((prev) => [...prev, { type, category }])
@@ -737,6 +1025,8 @@ function Dashboard() {
   // Unlocks browser audio on the first user gesture, which autoplay policy requires.
   const audioUnlockedRef = useRef(false)
   const audioCtxRef = useRef(null)
+  // Oscillators of the arrival chime, so clicking the popup can stop them.
+  const chimeNodesRef = useRef([])
 
   // Creates the shared WebAudio context used for the fallback alert tone.
   const getAudioCtx = () => {
@@ -770,6 +1060,48 @@ function Dashboard() {
     } catch (e) {
       // ignore
     }
+  }
+
+  // Plays a short two-note chime for the arrival popup, matching the department screen.
+  const playChime = () => {
+    if (localStorage.getItem("cg_soundEnabled") === "false") return
+    const ctx = getAudioCtx()
+    if (!ctx) return
+    try {
+      if (ctx.state === "suspended") ctx.resume()
+      const now = ctx.currentTime
+      chimeNodesRef.current = []
+      ;[660, 880].forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = "sine"
+        osc.frequency.value = freq
+        const start = now + i * 0.18
+        gain.gain.setValueAtTime(0.0001, start)
+        gain.gain.exponentialRampToValueAtTime(0.18, start + 0.02)
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16)
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.start(start)
+        osc.stop(start + 0.18)
+        chimeNodesRef.current.push(osc)
+      })
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Stops the chime at once, so clicking the popup silences it.
+  const stopChime = () => {
+    const nodes = chimeNodesRef.current || []
+    nodes.forEach((osc) => {
+      try {
+        osc.stop()
+      } catch (e) {
+        // ignore
+      }
+    })
+    chimeNodesRef.current = []
   }
 
   // Unlocks audio on the first click or key press so later alerts are allowed to play.
@@ -806,7 +1138,10 @@ function Dashboard() {
       if (category === "Fire") sound = "/fire.mp3"
       if (category === "Medical Emergency") sound = "/ambulance.mp3"
       if (category === "Crime") sound = "/police.mp3"
-      if (category === "Accident") sound = "/accident.mp3"
+      // An accident now uses the same sound as a medical emergency.
+      if (category === "Accident") sound = "/ambulance.mp3"
+      // A terrorist report now uses the same sound as a crime report handled by the PNP.
+      if (category === "Terrorist") sound = "/police.mp3"
       if (category === "Flood") sound = "/flood.mp3"
     }
     isPlayingRef.current = true
@@ -881,7 +1216,14 @@ function Dashboard() {
   // same one-shot token as the map — it no longer re-fires on every `settings` change.
   useEffect(() => {
     if (!mapFocus) return
-    const key = mapFocus.mode === "otw" ? `otw:${mapFocus.id}` : mapFocus.id
+    // A report can own one pin per department, so open the first matching OTW popup.
+    let key = mapFocus.id
+    if (mapFocus.mode === "otw") {
+      const otwKey = Object.keys(popupRefs.current).find(
+        (k) => k === `otw:${mapFocus.id}` || k.startsWith(`otw:${mapFocus.id}::`)
+      )
+      key = otwKey || `otw:${mapFocus.id}`
+    }
     const ref = popupRefs.current[key]
     if (ref) ref.openPopup()
   }, [mapFocus])
@@ -948,10 +1290,14 @@ function Dashboard() {
   // incident's own marker, "card" -> the driving pin while OTW, else the evidence pin.
   const focusMap = (report, mode) => {
     if (!report) return
-    const otwResp = deptResponders[report.id]
+    // A report can own several pins, so focus the first one that is still driving.
+    const otwKey = Object.keys(deptResponders).find(
+      (k) => k === report.id || k.startsWith(`${report.id}::`)
+    )
+    const otwResp = otwKey ? deptResponders[otwKey] : null
     const wantOtw =
       (mode === "otw" || mode === "card") &&
-      report.status === "dispatched" &&
+      dispatchedDeptsOf(report).length > 0 &&
       !!otwResp
     if (wantOtw) {
       setSelectedReport(report)
@@ -1000,59 +1346,62 @@ function Dashboard() {
     }
   }
 
-  // ✅ P18 REVISION: Assign a department to respond to an incident (OTW).
-  // This writes ONLY the responding department fields (assignedDepartment,
-  // status, dispatchedAt, assignedBy). It MUST NEVER write `type` or
-  // `aiCategory` — the incident's category stays the ORIGINAL AI-suggested one.
-const assignDepartment = async (id, dept) => {
-  if (!dept) return;
+  // Endorses an incident to a department and leaves the status pending.
+  // The department account then assigns its own team, which is what dispatches.
+  const assignDepartment = async (id, dept) => {
+    if (!dept) return;
 
-  try {
-    const departments = Array.isArray(dept) ? dept : [dept];
-    const primaryDept = departments[0];
+    try {
+      const departments = Array.isArray(dept) ? dept : [dept];
+      const primaryDept = departments[0];
 
-    await updateDoc(doc(db, "reports", id), {
-      assignedDepartment: primaryDept,
-      assignedDepartments: departments,
-      status: "dispatched",
-      dispatchedAt: new Date(),
-      assignedBy: auth.currentUser?.email || "admin"
-    });
+      await updateDoc(doc(db, "reports", id), {
+        assignedDepartment: primaryDept,
+        assignedDepartments: departments,
+        status: "pending",
+        endorsedAt: new Date(),
+        endorsedBy: auth.currentUser?.email || "admin"
+      });
 
-    const dispatchedReport = reportsRef.current.find((x) => x.id === id);
+      // Silent confirmation, so the admin knows the department was notified.
+      setAssignNotice({
+        text: `${departments.join(" and ")} has been notified and will assign a team to this incident.`
+      });
+    } catch (err) {
+      console.log(err);
+      alert("Error assigning department");
+    }
+  };
 
-    if (dispatchedReport && dispatchedReport.location) {
-      const lat = Number(dispatchedReport.location.latitude);
-      const lng = Number(dispatchedReport.location.longitude);
+  // Announces each department's own dispatch, so the admin sees a team is on the way.
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const next = {};
 
-      if (!isNaN(lat) && !isNaN(lng)) {
-        const seeded = {
-          ...drivesRef.current,
-          [id]: {
-            anchor: Date.now(),
-            start: getDeptStart(primaryDept),
-            dest: { lat, lng },
-            dept: primaryDept,
-            route: deptRoutes[id] && deptRoutes[id].length > 1
-              ? deptRoutes[id]
-              : null
-          }
-        };
-
-        drivesRef.current = seeded;
-        setDrives(seeded);
-        setDeptResponders(tickResponders(seeded, Date.now()));
-        patchSharedState({ drives: seeded });
-      }
+    // The first snapshot only records what is already dispatched, so nothing replays.
+    if (!dispatchSeededRef.current) {
+      if (reports.length === 0) return;
+      reports.forEach((r) => { next[r.id] = dispatchedDeptsOf(r); });
+      prevStatusRef.current = next;
+      dispatchSeededRef.current = true;
+      return;
     }
 
-    enqueueSound(null, "Fire");
+    reports.forEach((r) => {
+      const now = dispatchedDeptsOf(r);
+      const before = prev[r.id] || [];
+      next[r.id] = now;
+      // Only a department that just assigned a team is announced.
+      const fresh = now.filter((d) => !before.includes(d));
+      if (fresh.length) {
+        setTeamNotice({
+          text: `${fresh.join(" and ")} assigned a team and is on the way to the incident.`
+        });
+      }
+    });
 
-  } catch (err) {
-    console.log(err);
-    alert("Error assigning department");
-  }
-};
+    prevStatusRef.current = next;
+  }, [reports]);
   // Marks a report as fake and freezes its elapsed time, the same way resolving does.
   const rejectReport = async (id) => {
     if (!window.confirm("Mark this report as FAKE / not a real incident? This cannot be undone.")) return
@@ -1133,12 +1482,16 @@ const autoResolve = async (id, dept) => {
   useEffect(() => {
     let cancelled = false
     const dispatched = reports.filter(
-      (r) => r.status === "dispatched" && r.assignedDepartment && r.location
+      (r) => activeDeptsOf(r).length > 0 && r.location
     )
     if (dispatched.length === 0) return
     const fetchRoutes = async () => {
-      const tasks = dispatched.map(async (r) => {
-        const start = getDeptStart(r.assignedDepartment)
+      // One route per responding department, so each pin follows its own road path.
+      const pairs = dispatched.flatMap((r) =>
+        activeDeptsOf(r).map((dept) => ({ r, dept, key: `${r.id}::${dept}` }))
+      )
+      const tasks = pairs.map(async ({ r, dept, key }) => {
+        const start = getDeptStart(dept)
         const lat = Number(r.location.latitude)
         const lng = Number(r.location.longitude)
         if (isNaN(lat) || isNaN(lng)) return null
@@ -1148,7 +1501,7 @@ const autoResolve = async (id, dept) => {
           const data = await res.json()
           if (!data.routes || !data.routes[0] || !data.routes[0].geometry) return null
           const coords = data.routes[0].geometry.coordinates.map(([lng2, lat2]) => [lat2, lng2])
-          return { id: r.id, coords }
+          return { key, coords }
         } catch (err) {
           return null
         }
@@ -1157,13 +1510,32 @@ const autoResolve = async (id, dept) => {
       if (cancelled) return
       setDeptRoutes((prev) => {
         const next = { ...prev }
-        results.forEach((res) => { if (res) next[res.id] = res.coords })
+        results.forEach((res) => { if (res) next[res.key] = res.coords })
         return next
       })
     }
     fetchRoutes()
     return () => { cancelled = true }
   }, [reports])
+
+  // Save the real road distance on each report, so the department screens read the same numbers.
+  useEffect(() => {
+    const dispatched = reports.filter((r) => dispatchedDeptsOf(r).length > 0 && r.location)
+    if (dispatched.length === 0) return
+    const drivesWithRoutes = buildDrives(reports, deptRoutes, drivesRef.current)
+    dispatched.forEach((r) => {
+      // A failed save is caught per report, so one bad record cannot blank the page.
+      try {
+        const tripRecords = tripRecordsFor(r, drivesWithRoutes)
+        if (!Object.keys(tripRecords).length) return
+        // Skip the write when the saved record already matches, so this cannot loop.
+        if (JSON.stringify(r.tripRecords || {}) === JSON.stringify(tripRecords)) return
+        updateDoc(doc(db, "reports", r.id), { tripRecords }).catch((e) => console.log("Trip record save failed:", e))
+      } catch (e) {
+        console.log("Trip record build failed:", e)
+      }
+    })
+  }, [reports, deptRoutes])
 
   // ✅ P5 REVISION: Animate department responders along the road route (or a
   // straight fallback line) from each department's own base toward the incident.
@@ -1192,6 +1564,66 @@ const autoResolve = async (id, dept) => {
         }
       }
       const nextResp = tickResponders(nextDrives, now)
+      // Departments whose pin has already stopped, keyed by report, so a two-pin report can wait for both.
+      const stoppedByReport = {}
+      Object.keys(nextResp).forEach((key) => {
+        if (nextResp[key].progress < 1) return
+        const rid = nextResp[key].reportId
+        if (!stoppedByReport[rid]) stoppedByReport[rid] = new Set()
+        stoppedByReport[rid].add(nextResp[key].dept)
+      })
+      // A stopped pin stamps its own department's arrival, which unlocks that department's resolve button.
+      if (reports.length > 0) {
+        Object.keys(nextResp).forEach((key) => {
+          if (nextResp[key].progress < 1) return
+          const reportId = nextResp[key].reportId
+          const dept = nextResp[key].dept
+          const rep = reportsRef.current.find((x) => x.id === reportId)
+          if (!rep || !dept) return
+          // Save the finished trip once, so the resolved card shows stopped figures.
+          if (!tripLogRef.current[key]) {
+            const finalStats = driveStats(drivesRef.current[key], Date.now())
+            if (finalStats) {
+              const nextLog = { ...tripLogRef.current, [key]: { ...finalStats, etaSec: 0 } }
+              // Keep only the newest entries, so the saved record cannot grow forever.
+              const keys = Object.keys(nextLog)
+              if (keys.length > 200) keys.slice(0, keys.length - 200).forEach((k) => delete nextLog[k])
+              tripLogRef.current = nextLog
+              setTripLog(nextLog)
+              patchSharedState({ tripLog: nextLog })
+            }
+          }
+          // Only departments that actually assigned a team are waited for here.
+          const assigned = dispatchedDeptsOf(rep)
+          const arrivedMap = { ...(rep.arrivedAtByDept || {}) }
+          // Write this department's arrival stamp once, so its resolve button unlocks.
+          if (!arrivedMap[dept] && !arrivedWrittenRef.current.has(key)) {
+            arrivedWrittenRef.current.add(key)
+            arrivedMap[dept] = new Date()
+            const patch = { arrivedAtByDept: arrivedMap }
+            // A single-department report also keeps the shared stamp for older screens.
+            if (assigned.length <= 1 && !rep.arrivedAt) patch.arrivedAt = new Date()
+            updateDoc(doc(db, "reports", reportId), patch).catch(() => {})
+          }
+          // A terrorist report announces each responder separately, so a late pin still gets its own popup.
+          const stopped = stoppedByReport[reportId] || new Set()
+          if (!arrivedMap[dept] && !stopped.has(dept)) return
+          // One arrival popup per department, so a second pin opens its own popup.
+          const arrivalKey = `${reportId}::${dept}`
+          if (arrivalAnnouncedRef.current.has(arrivalKey)) return
+          // A key saved by an older build is treated as announced, so nothing replays.
+          if (arrivalAnnouncedRef.current.has(reportId)) return
+          arrivalAnnouncedRef.current.add(arrivalKey)
+          // Remember the announced department, so a remount cannot replay the popup.
+          patchSharedState({ announcedArrivals: [...arrivalAnnouncedRef.current].slice(-200) })
+          // Tell the admin this responder is on site and the resolve is now up to them.
+          setArrivalNotice({
+            text: `${dept} has arrived at the incident location. Please wait for the response.`,
+            at: Date.now()
+          })
+          playChime()
+        })
+      }
       setDeptResponders((prev) => (sameResponders(prev, nextResp) ? prev : nextResp))
     }
     animate()
@@ -1200,6 +1632,66 @@ const autoResolve = async (id, dept) => {
   }, [reports, deptRoutes])
 
   // ✅ P5 REVISION: Auto-resolve when a department responder arrives at the incident
+
+  // Keys of department resolves already announced, seeded from the saved ledger at mount.
+  const announcedResolveRef = useRef(
+    new Set(
+      Array.isArray(loadSharedState().announcedResolves)
+        ? loadSharedState().announcedResolves
+        : []
+    )
+  )
+  // True once the first snapshot has been read, so old resolves are never announced.
+  const resolveSeededRef = useRef(false)
+  // Mount instant, so a resolve that happened before this visit is never announced.
+  const sessionStartRef = useRef(Date.now())
+  // Reports already announced, so a double resolve in one snapshot shows one popup.
+  const announcedReportRef = useRef(new Set())
+
+  // Watches the reports for a new department resolve and announces it to the admin.
+  useEffect(() => {
+    const keys = new Set()
+    reports.forEach((r) => {
+      const done = Array.isArray(r.resolvedByDepartments) ? r.resolvedByDepartments : []
+      done.forEach((d) => keys.add(`${r.id}::${d}`))
+    })
+    // Wait for the first real snapshot, so a remount never re-announces an old resolve.
+    if (!resolveSeededRef.current) {
+      if (reports.length === 0) return
+      // Every resolve already in the data is treated as announced, so nothing replays.
+      keys.forEach((k) => announcedResolveRef.current.add(k))
+      resolveSeededRef.current = true
+      patchSharedState({ announcedResolves: [...announcedResolveRef.current].slice(-200) })
+      return
+    }
+    const fresh = [...keys].filter((k) => !announcedResolveRef.current.has(k))
+    if (fresh.length === 0) return
+    fresh.forEach((k) => announcedResolveRef.current.add(k))
+    // Remember the announced keys, so navigating away and back cannot replay the popup.
+    patchSharedState({ announcedResolves: [...announcedResolveRef.current].slice(-200) })
+    fresh.forEach((k) => {
+      const cut = k.lastIndexOf("::")
+      const reportId = k.slice(0, cut)
+      const dept = k.slice(cut + 2)
+      const rep = reports.find((x) => x.id === reportId)
+      // A partial terrorist resolve stays silent, because the report is not resolved yet.
+      if (!rep || rep.status !== "resolved") return
+      // Ignore a resolve from an earlier visit, so a cached snapshot cannot replay it.
+      const resolvedMs = toMs(rep.resolvedAt)
+      if (resolvedMs && resolvedMs < sessionStartRef.current - 120000) return
+      // Both departments can resolve in one snapshot, so announce each report only once.
+      if (announcedReportRef.current.has(reportId)) return
+      announcedReportRef.current.add(reportId)
+      const assigned = assignedDeptsOf(rep)
+      // A terrorist report only closes once both departments resolved, so say so.
+      setResolveNotice({
+        text: assigned.length > 1
+          ? `${assigned.join(" and ")} have both resolved the incident. The report is now resolved.`
+          : `${dept} has resolved the incident. The report is now resolved.`,
+        at: Date.now()
+      })
+    })
+  }, [reports])
 
   const unread = reports.filter((r) => !r.read).length
 
@@ -1210,6 +1702,7 @@ const autoResolve = async (id, dept) => {
   const accidentCount = reports.filter((r) => reportType(r) === "Accident").length
   const floodCount = reports.filter((r) => reportType(r) === "Flood").length
   const crimeCount = reports.filter((r) => reportType(r) === "Crime").length
+  const terroristCount = reports.filter((r) => reportType(r) === "Terrorist").length
 
   const formatTime = (timestamp) => {
     if (!timestamp) return "No time"
@@ -1238,17 +1731,19 @@ const filteredReports = reports.filter((r) => {
   }
 
   if (statusFilter !== "All") {
-    const selectedStatus =
-      statusFilter === "OTW"
-        ? "dispatched"
-        : statusFilter.toLowerCase()
-
-    if (st !== selectedStatus) {
+    // A report with any team already sent reads as OTW, so it never falls into Pending.
+    const hasTeam = dispatchedDeptsOf(r).length > 0
+    if (statusFilter === "OTW") {
+      if (!hasTeam) return false
+      if (st === "resolved" || st === "rejected") return false
+    } else if (statusFilter === "Pending") {
+      if (st !== "pending" || hasTeam) return false
+    } else if (st !== statusFilter.toLowerCase()) {
       return false
     }
   }
 
-  if (deptFilter !== "All" && r.assignedDepartment !== deptFilter) {
+  if (deptFilter !== "All" && !assignedDeptsOf(r).includes(deptFilter)) {
     return false
   }
 
@@ -1256,7 +1751,7 @@ const filteredReports = reports.filter((r) => {
 }).sort((a, b) => reportTimeMs(b.createdAt) - reportTimeMs(a.createdAt))
 
 const departments = [
-  ...new Set(reports.map((r) => r.assignedDepartment).filter(Boolean))
+  ...new Set(reports.flatMap((r) => assignedDeptsOf(r)))
 ]
 
   // Printable incident reports
@@ -1285,7 +1780,7 @@ const departments = [
         <td>${escapeHtml(r.description)}</td>
         <td>${escapeHtml(r.barangay)}</td>
         <td>${escapeHtml(r.severity)}</td>
-        <td>${escapeHtml(r.assignedDepartment)}</td>
+        <td>${escapeHtml(deptLabel(r))}</td>
         <td>${escapeHtml(formatTime(r.createdAt))}</td>
         <td>${escapeHtml(
           formatElapsed(
@@ -1381,6 +1876,70 @@ const departments = [
           🚨 NEW EMERGENCY ALERT: {reportType(alertPopup) || "Incident"}
           <br />
           <small>Click to view location</small>
+        </div>
+      )}
+
+      {/* Popup shown when a driving pin stops at the incident location. */}
+      {arrivalNotice && (
+        <div
+          onClick={() => { stopChime(); setArrivalNotice(null) }}
+          style={{
+            position: "fixed", top: "20px", left: "50%", transform: "translateX(-50%)",
+            background: "#1d4ed8", color: "white", padding: "15px 25px", borderRadius: "8px",
+            fontWeight: "bold", zIndex: 9999, cursor: "pointer", maxWidth: "520px"
+          }}
+        >
+          {"\u2705"} Responder on site
+          <br />
+          <small>{arrivalNotice.text}</small>
+        </div>
+      )}
+
+      {/* Popup shown when a department resolves the incident. */}
+      {resolveNotice && (
+        <div
+          onClick={() => setResolveNotice(null)}
+          style={{
+            position: "fixed", top: "20px", left: "50%", transform: "translateX(-50%)",
+            background: "#16a34a", color: "white", padding: "15px 25px", borderRadius: "8px",
+            fontWeight: "bold", zIndex: 9999, cursor: "pointer", maxWidth: "520px"
+          }}
+        >
+          {"\u2705"} Incident resolved
+          <br />
+          <small>{resolveNotice.text}</small>
+        </div>
+      )}
+
+      {/* Popup shown after the admin endorses an incident to a department. */}
+      {assignNotice && (
+        <div
+          onClick={() => setAssignNotice(null)}
+          style={{
+            position: "fixed", top: "20px", left: "50%", transform: "translateX(-50%)",
+            background: "#2d5be3", color: "white", padding: "15px 25px", borderRadius: "8px",
+            fontWeight: "bold", zIndex: 9999, cursor: "pointer", maxWidth: "520px"
+          }}
+        >
+          {"\u2705"} Incident endorsed
+          <br />
+          <small>{assignNotice.text}</small>
+        </div>
+      )}
+
+      {/* Popup shown after the department assigns its own team. */}
+      {teamNotice && (
+        <div
+          onClick={() => setTeamNotice(null)}
+          style={{
+            position: "fixed", top: "20px", left: "50%", transform: "translateX(-50%)",
+            background: "#1d4ed8", color: "white", padding: "15px 25px", borderRadius: "8px",
+            fontWeight: "bold", zIndex: 9999, cursor: "pointer", maxWidth: "520px"
+          }}
+        >
+          {"\ud83d\ude97"} Team dispatched
+          <br />
+          <small>{teamNotice.text}</small>
         </div>
       )}
 
@@ -1563,6 +2122,7 @@ const departments = [
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Accident")}>🚗 Accident: {accidentCount}</div>
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Flood")}>🌊 Flood: {floodCount}</div>
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Crime")}>🚓 Crime: {crimeCount}</div>
+        <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("Terrorist")}>💣 Terrorist: {terroristCount}</div>
         <div style={{ cursor: "pointer" }} onClick={() => setActiveFilter("All")}>📋 All</div>
       </div>
       
@@ -1638,11 +2198,11 @@ const departments = [
           <div style={{ width: `${incidentPanelWidth}px`, background: "#f4f4f4", height: "100%", overflowY: "auto", padding: "10px" }}>
           <h3>Incidents</h3>
 
-          {filteredReports.map((r) => {
+          {filteredReports.filter((r) => reportStatus(r) !== "resolved").map((r) => {
             const st = reportStatus(r)
             const isResolved = st === "resolved"
             const isRejected = st === "rejected"
-            const isDispatched = st === "dispatched"
+            const isDispatched = dispatchedDeptsOf(r).length > 0
             const sign = statusSign(r)
             return (
               <div key={r.id} onClick={() => openReport(r)} style={{
@@ -1671,11 +2231,17 @@ const departments = [
                     ⚠️ Severity: {r.severity}
                   </div>
                 )}
-                {r.assignedDepartment && (
+                {deptLabel(r) && (
                   <div style={{ marginTop: "4px", fontSize: "11px", color: "#2d5be3" }}>
-                    🏛️ {r.assignedDepartment}
+                    🏛️ {deptLabel(r)}
                   </div>
                 )}
+                {/* Every dispatched department keeps its figures, even after it resolved. */}
+                {isDispatched && dispatchedDeptsOf(r).map((dept) => (
+                  activeDeptsOf(r).includes(dept)
+                    ? <TripLine key={dept} stats={driveStats(driveForReport(r, dept, drives), Date.now())} type={reportType(r)} dept={dept} />
+                    : <TripLine key={dept} stats={frozenStatsFor(r, dept, tripLog)} stopped type={reportType(r)} dept={dept} />
+                ))}
                 <br />
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
                   {/* ✅ P20 REVISION: AUTOMATIC department box (replaces the dropdown).
@@ -1686,34 +2252,43 @@ const departments = [
                       and Fake button are removed for that incident. */}
                   {!isResolved && !isRejected && !isDispatched && (
                     <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                          padding: "5px 8px", borderRadius: "4px", fontSize: "12px",
-                          border: "1px solid #2d5be3", background: "#eef2ff", color: "#111827",
-                          fontWeight: "600", maxWidth: "150px", whiteSpace: "nowrap",
-                          overflow: "hidden", textOverflow: "ellipsis"
-                        }}
-                        title={autoDetectDept(r)}
-                      >
-                        {autoDetectDept(r)}
+                      {/* Each detected department gets its own box so the names never merge. */}
+                      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                        {[].concat(autoDetectDept(r)).map((dept) => (
+                          <div
+                            key={dept}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              padding: "5px 8px", borderRadius: "4px", fontSize: "12px",
+                              border: "1px solid #2d5be3", background: "#eef2ff", color: "#111827",
+                              fontWeight: "600", maxWidth: "150px", whiteSpace: "nowrap",
+                              overflow: "hidden", textOverflow: "ellipsis"
+                            }}
+                            title={dept}
+                          >
+                            {dept}
+                          </div>
+                        ))}
                       </div>
                       {/* ✅ P9 REVISION: "Assign" button — dispatches the auto-detected department OTW */}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); assignDepartment(r.id, autoDetectDept(r)) }}
-                        style={{
-                          background: "#2d5be3", color: "white", border: "none",
-                          padding: "5px 10px", borderRadius: "4px", cursor: "pointer",
-                          fontWeight: "600", fontSize: "12px"
-                        }}
-                      >
-                        Assign
-                      </button>
+                      {!isEndorsed(r) && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); assignDepartment(r.id, autoDetectDept(r)) }}
+                          style={{
+                            background: "#2d5be3", color: "white", border: "none",
+                            padding: "5px 10px", borderRadius: "4px", cursor: "pointer",
+                            fontWeight: "600", fontSize: "12px"
+                          }}
+                        >
+                          Assign
+                        </button>
+                      )}
                     </div>
                   )}
                   {/* ✅ P5 REVISION: Manual Resolve removed — the department auto-resolves on arrival.
-                      ✅ P19 REVISION: Fake button also hidden once the incident is dispatched (OTW). */}
-                  {!isResolved && !isRejected && !isDispatched && (
+                      ✅ P19 REVISION: Fake button also hidden once the incident is dispatched (OTW).
+                      ✅ Hidden too once the incident is endorsed, so only the department acts next. */}
+                  {!isResolved && !isRejected && !isDispatched && !isEndorsed(r) && (
                     <button
                       onClick={(e) => { e.stopPropagation(); rejectReport(r.id) }}
                       style={{ background: "#999", color: "white", border: "none", padding: "5px 10px", borderRadius: "4px", cursor: "pointer" }}
@@ -1725,6 +2300,56 @@ const departments = [
               </div>
             )
           })}
+
+          {/* Resolved incidents move here, so the active list only holds live work. */}
+          {filteredReports.some((r) => reportStatus(r) === "resolved") && (
+            <>
+              <h3 style={{ marginTop: "18px" }}>Resolved</h3>
+              {filteredReports.filter((r) => reportStatus(r) === "resolved").map((r) => {
+                const sign = statusSign(r)
+                return (
+                <div key={r.id} onClick={() => openReport(r)} style={{
+                  background: "white", padding: "10px", marginBottom: "10px", borderRadius: "6px",
+                  boxShadow: "0 2px 4px rgba(0,0,0,0.1)", cursor: "pointer",
+                  borderLeft: "4px solid green"
+                }}>
+                  <b>{reportType(r) || "Emergency"}</b>
+                  {/* Same status sign as the active list, so the card keeps the original design. */}
+                  {sign && (
+                    <span style={{ color: sign.color, fontSize: "11px", marginLeft: "6px" }}>{sign.text}</span>
+                  )}
+                  <br />
+                  <div style={{ color: "#666", fontSize: "12px", marginTop: "4px" }}>
+                    {"\u23f1\ufe0f"} Elapsed: {formatElapsed(r.createdAt, r.resolvedAt || r.rejectedAt, r.responseSeconds)}
+                  </div>
+                  <div style={{ marginTop: "6px", fontSize: "13px" }}>{r.description}</div>
+                  {r.barangay && (
+                    <div style={{ marginTop: "4px", fontSize: "11px", color: "#666" }}>
+                      {"\ud83d\udccd"} Barangay: {r.barangay}
+                    </div>
+                  )}
+                  {r.severity && (
+                    <div style={{ marginTop: "2px", fontSize: "11px", color: r.severity === "High" ? "red" : r.severity === "Medium" ? "orange" : "green" }}>
+                      {"\u26a0\ufe0f"} Severity: {r.severity}
+                    </div>
+                  )}
+                  {deptLabel(r) && (
+                    <div style={{ marginTop: "4px", fontSize: "11px", color: "#2d5be3" }}>
+                      {"\ud83c\udfdb\ufe0f"} {deptLabel(r)}
+                    </div>
+                  )}
+                  {/* Stopped trip figures, so a resolved card never keeps counting. */}
+                  {r.dispatchedAt && dispatchedDeptsOf(r).map((dept) => (
+                    <TripLine key={dept} stats={frozenStatsFor(r, dept, tripLog)} stopped type={reportType(r)} dept={dept} />
+                  ))}
+                  <br />
+                  {/* Same empty action row as the original card, so the spacing is unchanged. */}
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }} />
+                </div>
+                )
+              })}
+            </>
+          )}
           </div>
           {/* Drag this edge left or right to resize the Incidents panel. */}
           <div
@@ -1756,7 +2381,7 @@ const departments = [
             {Object.keys(DEPT_START).map((dept) => {
               const base = DEPT_START[dept]
               const isDispatched = reports.some(
-                (r) => r.status === "dispatched" && r.assignedDepartment === dept
+                (r) => activeDeptsOf(r).includes(dept)
               )
               return (
                 <Marker key={dept} position={[base.lat, base.lng]} icon={getDeptIcon(dept)}>
@@ -1775,9 +2400,10 @@ const departments = [
               const lng = Number(report.location.longitude)
               if (isNaN(lat) || isNaN(lng)) return null
               const deptColor = DEPT_COLORS[report.assignedDepartment] || "#2d5be3"
-              const isDispatched = reportStatus(report) === "dispatched"
+              const isDispatched = dispatchedDeptsOf(report).length > 0
               const sign = statusSign(report)
-              const deptResp = deptResponders[report.id]
+              // One pin per responding department, so a terrorist report drives both PNP and medical.
+              const driveKeys = activeDeptsOf(report).map((dept) => `${report.id}::${dept}`)
               // Each piece of evidence is resolved on its own, so a report with a
               // photo and a video backup renders both players.
               const evidence = evidenceParts(report)
@@ -1785,27 +2411,33 @@ const departments = [
                 <div key={report.id}>
                   {/* ✅ P5 REVISION: Department-themed OTW line from Dagupan to the incident,
                       with the department responder emoji + OTW message moving along it */}
-                  {isDispatched && (
-                    <>
-                      {/* ✅ P10 REVISION: The colored themed line is the ROAD ROUTE
-                          polyline (OSRM) from the department's own base to the incident. */}
-                      <Polyline
-                        positions={deptRoutes[report.id] && deptRoutes[report.id].length > 1
-                          ? deptRoutes[report.id]
-                          : [[getDeptStart(report.assignedDepartment).lat, getDeptStart(report.assignedDepartment).lng], [lat, lng]]}
-                        pathOptions={{ color: deptColor, weight: 4, dashArray: "8, 8" }}
-                      />
-                      {deptResp && (
-                        <Marker position={[deptResp.lat, deptResp.lng]} icon={getDeptIcon(report.assignedDepartment)} ref={(ref) => { if (ref) popupRefs.current[`otw:${report.id}`] = ref }}>
+                  {isDispatched && driveKeys.map((key) => {
+                    const deptResp = deptResponders[key]
+                    if (!deptResp) return null
+                    const dept = deptResp.dept || report.assignedDepartment
+                    const route = deptRoutes[key]
+                    return (
+                      <div key={key}>
+                        {/* ✅ P10 REVISION: The colored themed line is the ROAD ROUTE
+                            polyline (OSRM) from the department's own base to the incident. */}
+                        <Polyline
+                          positions={route && route.length > 1
+                            ? route
+                            : [[getDeptStart(dept).lat, getDeptStart(dept).lng], [lat, lng]]}
+                          pathOptions={{ color: DEPT_COLORS[dept] || deptColor, weight: 4, dashArray: "8, 8" }}
+                        />
+                        <Marker position={[deptResp.lat, deptResp.lng]} icon={getDeptIcon(dept)} ref={(ref) => { if (ref) popupRefs.current[`otw:${key}`] = ref }}>
                           <Popup>
-                            <b>{DEPT_EMOJI[report.assignedDepartment] || "🚨"} {report.assignedDepartment}</b>
+                            <b>{DEPT_EMOJI[dept] || "🚨"} {dept}</b>
                             <br />
                             <small>🚗 OTW to incident</small>
+                            {/* Same figures as the card, so the pin and the card always agree. */}
+                            <TripLine stats={driveStats(drives[key], Date.now())} type={reportType(report)} dept={dept} />
                           </Popup>
                         </Marker>
-                      )}
-                    </>
-                  )}
+                      </div>
+                    )
+                  })}
                   <Marker key={report.id} position={[lat, lng]} icon={getMarkerIcon(reportType(report))} ref={(ref) => { if (ref) popupRefs.current[report.id] = ref }}>
                     <Popup>
                       <div style={{ width: "240px" }}>
@@ -1850,7 +2482,7 @@ const departments = [
                           View on Google Maps
                         </a>
                         <br />
-                        {report.assignedDepartment && <div style={{ fontSize: "12px", color: deptColor }}>🏛️ {report.assignedDepartment}</div>}
+                        {deptLabel(report) && <div style={{ fontSize: "12px", color: deptColor }}>🏛️ {deptLabel(report)}</div>}
                         <br />
                         <div style={{ fontSize: "12px", color: "#666" }}>
                           ⏱️ Elapsed: {formatElapsed(report.createdAt, report.resolvedAt || report.rejectedAt, report.responseSeconds)}
