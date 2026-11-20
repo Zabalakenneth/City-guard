@@ -174,6 +174,14 @@ function dispatchedAtFor(r, dept) {
 // Fixed order so every account names the responders in the same sequence.
 const DEPT_ORDER = ["PNP", "Medical Emergency Team and Responders", "BFP", "CDRRMO/MDRRMO"];
 
+// Accounts whose live map is hidden for now, kept in the file as a backup.
+const LIVE_MAP_HIDDEN_DEPTS = ["PNP", "Medical Emergency Team and Responders"];
+
+// True when this account should not show the live map.
+function isLiveMapHidden(dept) {
+  return LIVE_MAP_HIDDEN_DEPTS.includes(dept);
+}
+
 // Sorts a department list into the fixed order, so both accounts read the same sentence.
 function orderedDepts(list) {
   return [...list].sort((a, b) => {
@@ -1884,16 +1892,18 @@ export default function DepartmentDashboard() {
           </p>
         </section>
 
-        {/* Read-only live map, so this account can monitor its own incidents. */}
-        <section className="dept-map-card">
-          <div className="dept-map-head">
-            <h2>{department || "Department"} Live Map</h2>
-            <span>Monitoring only</span>
-          </div>
-          <div className="dept-map-body">
-            <DeptLiveMap department={department} reports={reports} />
-          </div>
-        </section>
+        {/* Live map stays in the file but is hidden for the PNP and Medical accounts. */}
+        {!isLiveMapHidden(department) && (
+          <section className="dept-map-card">
+            <div className="dept-map-head">
+              <h2>{department || "Department"} Live Map</h2>
+              <span>Monitoring only</span>
+            </div>
+            <div className="dept-map-body">
+              <DeptLiveMap department={department} reports={reports} />
+            </div>
+          </section>
+        )}
 
         <section className="dept-stats">
           <div className="dept-stat">

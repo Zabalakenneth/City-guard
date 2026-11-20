@@ -628,6 +628,15 @@ const formatAiConfidence = (report) => {
 // Lowercases the status so a stray capital never breaks the routing.
 const reportStatus = (r) => (r.status ? String(r.status).toLowerCase() : "pending")
 
+// Ranks severity so High comes first, then Medium, then Low.
+const severityRank = (r) => {
+  const s = String(r.severity || "").toLowerCase()
+  if (s === "high" || s === "critical") return 0
+  if (s === "medium") return 1
+  if (s === "low") return 2
+  return 3
+}
+
 // One sign per status, so two signs can never stack.
 const STATUS_SIGNS = {
   dispatched: { text: "🚚 OTW", color: "#2d5be3" },
@@ -1229,6 +1238,7 @@ function Dashboard() {
   }, [mapFocus])
 
   // ✅ P1 REVISION: Response time standards monitoring (target 10–20 min)
+  // ✅ REVISION: Medium and High severity are skipped here, so they get no 10 or 20 minute alert or sound.
   // ✅ FIX (P23 REVISION): this monitor is now created ONCE and reads the latest state
   // from refs. It used to be destroyed and re-created every time `reports` / `settings` /
   // `alertedReports` changed - and the 1-second responder tick changes `reports`
@@ -1248,6 +1258,9 @@ function Dashboard() {
       reportsRef.current.forEach((r) => {
         if (!r.createdAt || r.status === "resolved" || r.status === "rejected") return
         if (resolvedIdsRef.current.has(r.id)) return
+        // Medium and High severity no longer get the 10 or 20 minute alert or sound.
+        const sev = String(r.severity || "").toLowerCase()
+        if (sev === "medium" || sev === "high" || sev === "critical") return
         const created = r.createdAt?.seconds
           ? r.createdAt.seconds * 1000
           : new Date(r.createdAt).getTime()
@@ -1748,7 +1761,14 @@ const filteredReports = reports.filter((r) => {
   }
 
   return true
-}).sort((a, b) => reportTimeMs(b.createdAt) - reportTimeMs(a.createdAt))
+}).sort((a, b) => {
+  // Pending sorts by severity first, every other tab keeps newest first.
+  if (statusFilter === "Pending") {
+    const diff = severityRank(a) - severityRank(b)
+    if (diff !== 0) return diff
+  }
+  return reportTimeMs(b.createdAt) - reportTimeMs(a.createdAt)
+})
 
 const departments = [
   ...new Set(reports.flatMap((r) => assignedDeptsOf(r)))
