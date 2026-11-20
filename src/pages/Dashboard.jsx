@@ -1265,6 +1265,10 @@ function Dashboard() {
           ? r.createdAt.seconds * 1000
           : new Date(r.createdAt).getTime()
         const diffMinutes = (now - created) / 1000 / 60
+        // Low severity alerts stop once the report is assigned, so an assigned report never escalates.
+        const assignedAt = r.endorsedAt?.seconds ? r.endorsedAt.seconds * 1000 : r.endorsedAt ? new Date(r.endorsedAt).getTime() : 0
+        // Assigned before the 10 minute mark, so neither alert is needed.
+        if (assignedAt && assignedAt <= created + s.responseTargetMin * 60000) return
 
         if (diffMinutes >= s.responseTargetMin && diffMinutes < s.responseCriticalMin && !settled[r.id]) {
           settled[r.id] = "warning"
@@ -1272,7 +1276,7 @@ function Dashboard() {
           pushTimeAlert("warning", `WARNING: ${r.aiCategory} has passed ${s.responseTargetMin} minutes`)
           setAlertedReports((prev) => ({ ...prev, [r.id]: "warning" }))
         }
-        if (diffMinutes >= s.responseCriticalMin && settled[r.id] !== "critical") {
+        if (diffMinutes >= s.responseCriticalMin && settled[r.id] !== "critical" && !assignedAt) {
           settled[r.id] = "critical"
           enqueueSound("critical", r.aiCategory)
           pushTimeAlert("critical", `CRITICAL: ${r.aiCategory} has passed ${s.responseCriticalMin} minutes`)
